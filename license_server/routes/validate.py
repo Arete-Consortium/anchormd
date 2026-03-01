@@ -12,6 +12,7 @@ from fastapi import APIRouter, Request
 from license_server.database import get_connection
 from license_server.key_gen import hash_key, validate_key_checksum, validate_key_format
 from license_server.models import ValidateRequest, ValidateResponse
+from license_server.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ def _track_machine(conn, license_id: str, machine_id: str) -> None:
 
 
 @router.post("/v1/validate", response_model=ValidateResponse)
+@limiter.limit("60/minute")
 def validate(req: ValidateRequest, request: Request) -> ValidateResponse:
     """Validate a license key, optionally tracking the machine."""
     conn = get_connection(_db_path_override)

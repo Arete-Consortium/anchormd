@@ -7,10 +7,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from license_server import __version__
 from license_server.database import close_connection, get_connection, run_migrations
 from license_server.models import ErrorResponse, HealthResponse
+from license_server.rate_limit import limiter
 from license_server.routes.activate import router as activate_router
 from license_server.routes.validate import router as validate_router
 
@@ -32,6 +35,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 app.include_router(activate_router)
 app.include_router(validate_router)
 
@@ -48,7 +54,8 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 
 
 @app.get("/v1/health", response_model=HealthResponse)
-def health() -> HealthResponse:
+@limiter.limit("120/minute")
+def health(request: Request) -> HealthResponse:
     """Health check with database statistics."""
     conn = get_connection(_db_path_override)
     try:

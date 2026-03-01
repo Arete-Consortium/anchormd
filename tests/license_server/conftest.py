@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from license_server import main as main_module
 from license_server.database import run_migrations
 from license_server.main import app
+from license_server.rate_limit import limiter
 
 
 @pytest.fixture
@@ -35,8 +36,11 @@ def client(db, monkeypatch):
     monkeypatch.setattr("license_server.main.get_connection", _get_test_conn)
     monkeypatch.setattr("license_server.database._connection", db)
 
+    # Disable rate limiting for unit tests (tested separately).
+    limiter.enabled = False
     with TestClient(app) as c:
         yield c
+    limiter.enabled = True
 
 
 @pytest.fixture

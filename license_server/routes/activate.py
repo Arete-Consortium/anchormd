@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from license_server.config import get_admin_secret
 from license_server.database import get_connection
 from license_server.key_gen import generate_key, hash_key, mask_key, validate_key_checksum
 from license_server.models import ActivateRequest, ActivateResponse, ErrorResponse
+from license_server.rate_limit import limiter
 
 router = APIRouter()
 
@@ -32,8 +33,10 @@ def _require_admin(authorization: str = Header(...)) -> str:
     response_model=ActivateResponse,
     responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
 )
+@limiter.limit("10/minute")
 def activate(
     req: ActivateRequest,
+    request: Request,
     _token: str = Depends(_require_admin),
 ) -> ActivateResponse:
     """Create a new license key and activate it."""
