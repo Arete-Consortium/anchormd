@@ -109,6 +109,8 @@ claudemd_forge.cli:app
 - `AccuracyChecker`
 - `ActivateRequest`
 - `ActivateResponse`
+- `RevokeRequest`
+- `RevokeResponse`
 - `AnalysisError`
 - `AnalysisResult`
 - `AntiPatternChecker`
@@ -139,6 +141,7 @@ claudemd_forge.cli:app
 - `/users/{id}`
 - `/v1/activate`
 - `/v1/health`
+- `/v1/revoke`
 - `/v1/validate`
 
 ### Enums/Constants
