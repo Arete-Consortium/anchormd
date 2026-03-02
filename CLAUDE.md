@@ -6,10 +6,10 @@ Generate and audit CLAUDE.md files for AI coding agents
 
 ## Current State
 
-- **Version**: 0.2.0
+- **Version**: 0.2.1
 - **Language**: Python
-- **Files**: 130 across 3 languages
-- **Lines**: 15,518
+- **Files**: 163 across 3 languages
+- **Lines**: 19,323
 
 ## Architecture
 
@@ -32,6 +32,7 @@ claudemd-forge/
 ├── src/
 │   └── claudemd_forge/
 ├── tests/
+│   ├── drift/
 │   └── license_server/
 ├── .gitignore
 ├── .gitleaks.toml
@@ -60,7 +61,7 @@ claudemd-forge/
 - **Type Hints**: present
 - **Imports**: absolute
 - **Path Handling**: pathlib
-- **Line Length (p95)**: 77 characters
+- **Line Length (p95)**: 78 characters
 - **Error Handling**: Custom exception classes present
 
 ## Common Commands
@@ -109,20 +110,18 @@ claudemd_forge.cli:app
 - `AccuracyChecker`
 - `ActivateRequest`
 - `ActivateResponse`
-- `RevokeRequest`
-- `RevokeResponse`
 - `AnalysisError`
 - `AnalysisResult`
+- `AnthropicAdapter`
 - `AntiPatternChecker`
 - `AuditFinding`
 - `AuditReport`
 - `BaseTemplate`
-- `ClaudeMdAuditor`
-- `CodebaseScanner`
-- `CommandAnalyzer`
-- `CoverageChecker`
-- `DocumentComposer`
-- `DomainAnalyzer`
+- `BenchmarkCheck`
+- `BenchmarkDef`
+- `BenchmarkResult`
+- `BenchmarkSuite`
+- `CheckResult`
 
 ### Domain Terms
 - AI
@@ -145,14 +144,16 @@ claudemd_forge.cli:app
 - `/v1/validate`
 
 ### Enums/Constants
+- `CONTAINS_SECTIONS`
+- `CRITICAL`
 - `FREE`
+- `IMPROVED`
+- `JSON_VALID`
+- `LENGTH_RANGE`
+- `LLM_JUDGE`
+- `PATTERN_ABSENT`
+- `PATTERN_PRESENT`
 - `PRO`
-- `_ENV_LICENSE_KEY`
-- `_ENV_LICENSE_SERVER`
-- `_KEY_SALT`
-- `_VALID_KEY`
-- `import`
-- `values`
 
 ## Git Conventions
 
