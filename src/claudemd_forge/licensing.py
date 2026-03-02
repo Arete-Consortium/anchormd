@@ -63,6 +63,8 @@ TIER_DEFINITIONS: dict[Tier, TierConfig] = {
             "presets",
             "frameworks",
             "community_presets",
+            "drift_run",
+            "drift_report",
         ],
         preset_access=[
             "default",
@@ -93,6 +95,13 @@ TIER_DEFINITIONS: dict[Tier, TierConfig] = {
             "premium_presets",
             "team_templates",
             "priority_updates",
+            "drift_run",
+            "drift_report",
+            "drift_generate",
+            "drift_llm_judge",
+            "drift_fix",
+            "drift_ci",
+            "drift_html_report",
         ],
         preset_access=[
             "default",
@@ -125,6 +134,11 @@ PRO_FEATURES: frozenset[str] = frozenset(
         "premium_presets",
         "team_templates",
         "priority_updates",
+        "drift_generate",
+        "drift_llm_judge",
+        "drift_fix",
+        "drift_ci",
+        "drift_html_report",
     }
 )
 

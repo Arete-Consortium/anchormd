@@ -33,6 +33,11 @@ app = typer.Typer(
 )
 console = Console()
 
+# Register drift sub-command group.
+from claudemd_forge.drift.cli import drift_app  # noqa: E402
+
+app.add_typer(drift_app, name="drift", help="Agent behavioral drift detection.")
+
 
 def _version_callback(value: bool) -> None:
     if value:

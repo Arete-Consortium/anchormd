@@ -1,0 +1,23 @@
+version: 1
+benchmarks:
+  - id: code_style_snake_case
+    prompt: "Write a Python function that calculates the average of a list of numbers."
+    checks:
+      - type: pattern_present
+        pattern: "def [a-z_]+\\("
+        message: "Function should use snake_case naming"
+      - type: pattern_absent
+        pattern: "def [A-Z]"
+        message: "Function should not use PascalCase"
+    weight: 1.0
+
+  - id: error_handling
+    prompt: "Write a Python function that reads a JSON file and returns the parsed data."
+    checks:
+      - type: pattern_present
+        pattern: "try:"
+        message: "Should include error handling"
+      - type: pattern_present
+        pattern: "except"
+        message: "Should catch exceptions"
+    weight: 1.0

@@ -19,3 +19,7 @@ class TemplateError(ForgeError):
 
 class LicenseError(ForgeError):
     """Raised when a feature requires a higher license tier."""
+
+
+class DriftError(ForgeError):
+    """Raised when drift detection encounters an error."""
