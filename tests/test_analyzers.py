@@ -331,7 +331,9 @@ class TestSkillsAnalyzer:
         (skills_dir / "code-reviewer").mkdir()
         (skills_dir / "code-reviewer" / "SKILL.md").write_text("---\nname: code-reviewer\n---")
         (skills_dir / "composite-scorer").mkdir()
-        (skills_dir / "composite-scorer" / "SKILL.md").write_text("---\nname: composite-scorer\n---")
+        (skills_dir / "composite-scorer" / "SKILL.md").write_text(
+            "---\nname: composite-scorer\n---"
+        )
 
         structure, config = _scan(tmp_project)
         result = SkillsAnalyzer(skills_dir=skills_dir).analyze(structure, config)
