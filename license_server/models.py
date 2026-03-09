@@ -12,6 +12,7 @@ VALID_PRODUCTS = frozenset(
         "agent-lint",
         "ai-spend",
         "promptctl",
+        "context-hygiene",
     }
 )
 

@@ -16,6 +16,7 @@ PRODUCT_KEY_CONFIG: dict[str, tuple[str, str]] = {
     "agent-lint": ("ALNT", "agent-lint-v1"),
     "ai-spend": ("ASPD", "ai-spend-v1"),
     "promptctl": ("PCTL", "promptctl-v1"),
+    "context-hygiene": ("CTHG", "context-hygiene-v1"),
 }
 
 _DEFAULT_PRODUCT = "claudemd-forge"

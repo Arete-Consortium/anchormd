@@ -42,6 +42,12 @@ PRODUCT_INFO: dict[str, dict[str, str]] = {
         "file": "~/.promptctl-license",
         "issues": "https://github.com/AreteDriver/promptctl/issues",
     },
+    "context-hygiene": {
+        "display": "Context Hygiene",
+        "env_var": "CONTEXT_HYGIENE_LICENSE",
+        "file": "~/.context-hygiene-license",
+        "issues": "https://github.com/AreteDriver/context-hygiene/issues",
+    },
 }
 
 
