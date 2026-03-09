@@ -59,32 +59,33 @@ def validate(req: ValidateRequest, request: Request) -> ValidateResponse:
     client_ip = request.client.host if request.client else "unknown"
 
     # Format check.
-    if not validate_key_format(req.license_key):
+    if not validate_key_format(req.license_key, req.product):
         key_h = hash_key(req.license_key)
         _log_validation(conn, key_h, req.machine_id, "invalid_format", client_ip)
-        return ValidateResponse(valid=False, tier="free")
+        return ValidateResponse(valid=False, tier="free", product=req.product)
 
     # Checksum check.
-    if not validate_key_checksum(req.license_key):
+    if not validate_key_checksum(req.license_key, req.product):
         key_h = hash_key(req.license_key)
         _log_validation(conn, key_h, req.machine_id, "invalid_checksum", client_ip)
-        return ValidateResponse(valid=False, tier="free")
+        return ValidateResponse(valid=False, tier="free", product=req.product)
 
-    # Lookup by hash.
+    # Lookup by hash + product.
     key_h = hash_key(req.license_key)
     row = conn.execute(
-        "SELECT id, tier, email, active, expires_at, metadata FROM licenses WHERE key_hash = ?",
-        (key_h,),
+        "SELECT id, tier, email, active, expires_at, metadata, product FROM licenses "
+        "WHERE key_hash = ? AND product = ?",
+        (key_h, req.product),
     ).fetchone()
 
     if row is None:
         _log_validation(conn, key_h, req.machine_id, "not_found", client_ip)
-        return ValidateResponse(valid=False, tier="free")
+        return ValidateResponse(valid=False, tier="free", product=req.product)
 
     # Check active status.
     if not row["active"]:
         _log_validation(conn, key_h, req.machine_id, "revoked", client_ip)
-        return ValidateResponse(valid=False, tier="free", active=False)
+        return ValidateResponse(valid=False, tier="free", product=req.product, active=False)
 
     # Check expiry.
     expires_at = row["expires_at"]
@@ -95,7 +96,9 @@ def validate(req: ValidateRequest, request: Request) -> ValidateResponse:
                 exp = exp.replace(tzinfo=UTC)
             if datetime.now(UTC) > exp:
                 _log_validation(conn, key_h, req.machine_id, "expired", client_ip)
-                return ValidateResponse(valid=False, tier="free", expires_at=expires_at)
+                return ValidateResponse(
+                    valid=False, tier="free", product=req.product, expires_at=expires_at
+                )
         except ValueError:
             pass  # Malformed date — treat as non-expired
 
@@ -113,6 +116,7 @@ def validate(req: ValidateRequest, request: Request) -> ValidateResponse:
     return ValidateResponse(
         valid=True,
         tier=row["tier"],
+        product=row["product"],
         active=True,
         email=row["email"],
         expires_at=row["expires_at"],

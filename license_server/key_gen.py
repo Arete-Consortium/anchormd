@@ -1,7 +1,7 @@
 """License key generation and hashing utilities.
 
-Duplicates the checksum algorithm from claudemd_forge.licensing intentionally —
-the server is a separate deployable with no cross-package imports.
+Multi-product: generates keys with product-specific prefixes and salts.
+Each product's checksum algorithm matches its client-side licensing.py.
 """
 
 from __future__ import annotations
@@ -9,28 +9,44 @@ from __future__ import annotations
 import hashlib
 import secrets
 
-_KEY_SALT = "claudemd-forge-v1"
+# Product → (prefix, salt) mapping
+# Must match the client-side _PREFIX and _SALT in each product's licensing.py
+PRODUCT_KEY_CONFIG: dict[str, tuple[str, str]] = {
+    "claudemd-forge": ("CMDF", "claudemd-forge-v1"),
+    "agent-lint": ("ALNT", "agent-lint-v1"),
+    "ai-spend": ("ASPD", "ai-spend-v1"),
+    "promptctl": ("PCTL", "promptctl-v1"),
+}
+
+_DEFAULT_PRODUCT = "claudemd-forge"
 
 
-def _compute_check_segment(body: str) -> str:
+def _compute_check_segment(body: str, salt: str) -> str:
     """Derive the check segment from the two middle key segments.
 
-    Identical to the CLI-side implementation in licensing.py.
+    Algorithm: SHA256(salt:body)[:4].upper()
+    Identical to each product's client-side implementation.
     """
-    digest = hashlib.sha256(f"{_KEY_SALT}:{body}".encode()).hexdigest()
+    digest = hashlib.sha256(f"{salt}:{body}".encode()).hexdigest()
     return digest[:4].upper()
 
 
-def generate_key() -> str:
-    """Generate a valid CMDF-XXXX-XXXX-XXXX license key.
+def generate_key(product: str = _DEFAULT_PRODUCT) -> str:
+    """Generate a valid license key for the given product.
 
+    Format: PREFIX-XXXX-XXXX-XXXX (e.g. CMDF-A1B2-C3D4-54EF)
     Returns the full plaintext key (only exposed once at activation time).
     """
+    config = PRODUCT_KEY_CONFIG.get(product)
+    if config is None:
+        raise ValueError(f"Unknown product: {product!r}. Known: {list(PRODUCT_KEY_CONFIG)}")
+
+    prefix, salt = config
     seg1 = secrets.token_hex(2).upper()
     seg2 = secrets.token_hex(2).upper()
     body = f"{seg1}-{seg2}"
-    check = _compute_check_segment(body)
-    return f"CMDF-{seg1}-{seg2}-{check}"
+    check = _compute_check_segment(body, salt)
+    return f"{prefix}-{seg1}-{seg2}-{check}"
 
 
 def hash_key(key: str) -> str:
@@ -45,17 +61,23 @@ def mask_key(key: str) -> str:
     """Return a masked version of the key for display/storage.
 
     CMDF-ABCD-EFGH-54EF -> CMDF-****-****-54EF
+    ALNT-ABCD-EFGH-54EF -> ALNT-****-****-54EF
     """
     parts = key.strip().split("-")
     if len(parts) != 4:
-        return "CMDF-****-****-****"
-    return f"CMDF-****-****-{parts[3]}"
+        return "****-****-****-****"
+    return f"{parts[0]}-****-****-{parts[3]}"
 
 
-def validate_key_format(key: str) -> bool:
-    """Check if a key matches CMDF-XXXX-XXXX-XXXX format."""
+def validate_key_format(key: str, product: str = _DEFAULT_PRODUCT) -> bool:
+    """Check if a key matches PREFIX-XXXX-XXXX-XXXX format for the given product."""
+    config = PRODUCT_KEY_CONFIG.get(product)
+    if config is None:
+        return False
+
+    prefix = config[0]
     key = key.strip()
-    if not key.startswith("CMDF-"):
+    if not key.startswith(f"{prefix}-"):
         return False
     parts = key.split("-")
     if len(parts) != 4:
@@ -66,11 +88,16 @@ def validate_key_format(key: str) -> bool:
     return True
 
 
-def validate_key_checksum(key: str) -> bool:
-    """Verify the key's check segment matches its body."""
+def validate_key_checksum(key: str, product: str = _DEFAULT_PRODUCT) -> bool:
+    """Verify the key's check segment matches its body for the given product."""
+    config = PRODUCT_KEY_CONFIG.get(product)
+    if config is None:
+        return False
+
+    _, salt = config
     parts = key.strip().split("-")
     if len(parts) != 4:
         return False
     body = f"{parts[1]}-{parts[2]}"
-    expected = _compute_check_segment(body)
+    expected = _compute_check_segment(body, salt)
     return parts[3] == expected

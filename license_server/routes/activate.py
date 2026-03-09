@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from license_server.config import get_admin_secret
 from license_server.database import get_connection
 from license_server.key_gen import generate_key, hash_key, mask_key, validate_key_checksum
-from license_server.models import ActivateRequest, ActivateResponse, ErrorResponse
+from license_server.models import VALID_PRODUCTS, ActivateRequest, ActivateResponse, ErrorResponse
 from license_server.rate_limit import limiter
 
 router = APIRouter()
@@ -40,11 +40,14 @@ def activate(
     _token: str = Depends(_require_admin),
 ) -> ActivateResponse:
     """Create a new license key and activate it."""
+    if req.product not in VALID_PRODUCTS:
+        raise HTTPException(status_code=400, detail=f"Unknown product: {req.product}")
+
     conn = get_connection(_db_path_override)
 
-    key = generate_key()
+    key = generate_key(req.product)
 
-    if not validate_key_checksum(key):
+    if not validate_key_checksum(key, req.product):
         raise HTTPException(status_code=500, detail="Generated key failed validation")
 
     key_h = hash_key(key)
@@ -58,9 +61,10 @@ def activate(
     masked = mask_key(key)
 
     conn.execute(
-        "INSERT INTO licenses (id, key_hash, license_key_masked, tier, email, active, metadata) "
-        "VALUES (?, ?, ?, ?, ?, 1, ?)",
-        (license_id, key_h, masked, req.tier, req.email, json.dumps(req.metadata)),
+        "INSERT INTO licenses "
+        "(id, key_hash, license_key_masked, tier, email, active, product, metadata) "
+        "VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+        (license_id, key_h, masked, req.tier, req.email, req.product, json.dumps(req.metadata)),
     )
     conn.commit()
 
@@ -71,6 +75,7 @@ def activate(
     return ActivateResponse(
         license_key=key,
         tier=req.tier,
+        product=req.product,
         email=req.email,
         active=True,
         created_at=row["created_at"],

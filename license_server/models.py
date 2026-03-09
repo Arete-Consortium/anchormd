@@ -6,6 +6,15 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+VALID_PRODUCTS = frozenset(
+    {
+        "claudemd-forge",
+        "agent-lint",
+        "ai-spend",
+        "promptctl",
+    }
+)
+
 # --- Requests ---
 
 
@@ -14,6 +23,7 @@ class ActivateRequest(BaseModel):
 
     email: str
     tier: str = "pro"
+    product: str = "claudemd-forge"
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -21,6 +31,7 @@ class ValidateRequest(BaseModel):
     """Request body for POST /v1/validate."""
 
     license_key: str
+    product: str = "claudemd-forge"
     machine_id: str | None = None
 
 
@@ -41,6 +52,7 @@ class ActivateResponse(BaseModel):
 
     license_key: str
     tier: str
+    product: str
     email: str
     active: bool = True
     created_at: str
@@ -52,6 +64,7 @@ class ValidateResponse(BaseModel):
 
     valid: bool
     tier: str
+    product: str = "claudemd-forge"
     active: bool = False
     email: str | None = None
     expires_at: str | None = None
@@ -62,6 +75,7 @@ class RevokeRequest(BaseModel):
     """Request body for POST /v1/revoke."""
 
     license_key: str
+    product: str = "claudemd-forge"
 
 
 class RevokeResponse(BaseModel):
@@ -69,6 +83,7 @@ class RevokeResponse(BaseModel):
 
     revoked: bool
     license_key_masked: str
+    product: str = "claudemd-forge"
     email: str | None = None
     revoked_at: str
 

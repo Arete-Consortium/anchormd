@@ -48,8 +48,9 @@ def revoke(
 
     key_h = hash_key(req.license_key)
     row = conn.execute(
-        "SELECT license_key_masked, email FROM licenses WHERE key_hash = ?",
-        (key_h,),
+        "SELECT license_key_masked, email, product FROM licenses "
+        "WHERE key_hash = ? AND product = ?",
+        (key_h, req.product),
     ).fetchone()
 
     if row is None:
@@ -57,7 +58,10 @@ def revoke(
 
     revoked_at = datetime.now(UTC).isoformat()
 
-    conn.execute("UPDATE licenses SET active = 0 WHERE key_hash = ?", (key_h,))
+    conn.execute(
+        "UPDATE licenses SET active = 0 WHERE key_hash = ? AND product = ?",
+        (key_h, req.product),
+    )
     conn.commit()
 
     # Audit log.
@@ -70,6 +74,7 @@ def revoke(
     return RevokeResponse(
         revoked=True,
         license_key_masked=row["license_key_masked"],
+        product=row["product"],
         email=row["email"],
         revoked_at=revoked_at,
     )

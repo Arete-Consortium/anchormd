@@ -2,45 +2,62 @@
 
 ## Project Overview
 
-Generate and audit CLAUDE.md files for AI coding agents
+Generate and audit CLAUDE.md files for AI coding agents. Freemium CLI with Pro license server and Stripe-automated fulfillment.
 
 ## Current State
 
-- **Version**: 0.2.1
+- **Version**: 0.3.0
 - **Language**: Python
-- **Files**: 163 across 3 languages
-- **Lines**: 19,323
+- **Tests**: 134 (license server) + client-side tests
+- **License Server**: `https://cmdf-license.fly.dev` (Fly.io, SQLite + WAL)
+- **Stripe**: Live — automated checkout → key generation → email delivery
+
+## Monetization
+
+- **Free**: `generate`, `audit`, 11 community presets
+- **Pro ($8/mo or $69/yr)**: `init`, `diff`, CI integration, 6 premium presets, team templates
+- **Template Packs**: Gumroad ($5-10 each)
+- **Payment Links**: Stripe Payment Links → webhook → auto key + email
+- **Do NOT modify pricing without explicit approval**
 
 ## Architecture
 
 ```
 claudemd-forge/
-├── .github/
-│   └── workflows/
+├── .github/workflows/
 ├── docs/
-├── license_server/
-│   ├── migrations/
-│   └── routes/
+├── license_server/           # FastAPI license server (separate deployable)
+│   ├── migrations/           # SQLite schema migrations
+│   ├── routes/
+│   │   ├── activate.py       # POST /v1/activate (admin)
+│   │   ├── validate.py       # POST /v1/validate
+│   │   ├── revoke.py         # POST /v1/revoke (admin)
+│   │   └── webhook.py        # POST /v1/webhooks/stripe
+│   ├── stripe_webhooks.py    # Event handlers (checkout, cancel, payment_failed)
+│   ├── email_delivery.py     # SMTP license key delivery
+│   ├── key_gen.py            # CMDF-XXXX-XXXX-XXXX generation + hashing
+│   ├── config.py             # Env var configuration
+│   ├── database.py           # SQLite connection + migration runner
+│   ├── models.py             # Pydantic request/response models
+│   ├── rate_limit.py         # slowapi rate limiter
+│   ├── Dockerfile            # Multi-stage build for Fly.io
+│   ├── fly.toml              # Fly.io deployment config
+│   └── requirements.txt      # Server dependencies
 ├── output/
-├── packs/
-│   ├── django-pro/
-│   ├── fastapi-pro/
-│   ├── nextjs-pro/
-│   └── rust-pro/
+├── packs/                    # Gumroad template packs
 ├── prompts/
 ├── scripts/
-├── src/
-│   └── claudemd_forge/
+│   ├── stripe_setup.py       # Create Stripe products/prices/payment links
+│   └── keygen.py             # Manual key generation (legacy)
+├── src/claudemd_forge/       # CLI package (PyPI: claudemd-forge)
+│   ├── licensing.py          # Client-side key detection, validation, caching
+│   ├── machine_id.py         # Hostname+username hash
+│   ├── gates.py              # @require_pro feature gating
+│   └── cli.py                # Typer CLI
 ├── tests/
 │   ├── drift/
 │   └── license_server/
-├── .gitignore
-├── .gitleaks.toml
-├── BUILD_GUIDE.md
-├── CLAUDE.md
-├── LICENSE
-├── README.md
-├── action.yml
+├── .dockerignore
 ├── pyproject.toml
 ```
 
@@ -53,6 +70,62 @@ claudemd-forge/
 - **Type Checkers**: mypy
 - **Test Frameworks**: pytest
 - **CI/CD**: GitHub Actions
+- **Hosting**: Fly.io (license server), PyPI (CLI)
+- **Payments**: Stripe (webhooks + payment links)
+- **Email**: SMTP (Gmail app password)
+
+## API Endpoints (License Server)
+
+| Endpoint | Auth | Rate Limit | Purpose |
+|----------|------|------------|---------|
+| `GET /v1/health` | None | 120/min | Health check + license counts |
+| `POST /v1/activate` | Admin Bearer | 10/min | Create license key |
+| `POST /v1/validate` | None | 60/min | Validate license key |
+| `POST /v1/revoke` | Admin Bearer | 10/min | Revoke license key |
+| `POST /v1/webhooks/stripe` | Stripe signature | 30/min | Automated fulfillment |
+
+## License Key System
+
+- **Format**: `CMDF-XXXX-XXXX-XXXX` (uppercase alphanumeric)
+- **Checksum**: Segment 3 = first 4 hex chars of `SHA256("claudemd-forge-v1:{seg1}-{seg2}")`
+- **Storage**: SHA-256 hash only — plaintext never stored
+- **Masking**: `CMDF-****-****-{last4}` for display
+- **Client detection**: `CLAUDEMD_FORGE_LICENSE` env var → `.claudemd-forge-license` → `~/.config/claudemd-forge/license`
+- **Validation**: Local checksum → server call (5s timeout) → 24h cache → fail-open to local-only
+
+## Environment Variables
+
+### License Server (Fly.io secrets)
+- `CMDF_ADMIN_SECRET` — Bearer token for admin endpoints
+- `CMDF_DB_PATH` — SQLite path (default: `/data/license_server.db`)
+- `STRIPE_SECRET_KEY` — Stripe API key
+- `STRIPE_WEBHOOK_SECRET` — Stripe webhook signing secret
+- `CMDF_SMTP_USER` — Gmail address
+- `CMDF_SMTP_PASSWORD` — Gmail app password
+- `CMDF_SMTP_FROM` — From address for emails
+
+### Client (user-side)
+- `CLAUDEMD_FORGE_LICENSE` — License key
+- `CLAUDEMD_FORGE_LICENSE_SERVER` — Server URL (optional)
+
+## Common Commands
+
+```bash
+# test (all)
+.venv/bin/python -m pytest tests/ -v
+# test (license server only)
+.venv/bin/python -m pytest tests/license_server/ -v
+# lint
+ruff check src/ tests/ license_server/
+# format
+ruff format src/ tests/ license_server/
+# type check
+mypy src/
+# deploy license server
+fly deploy --dockerfile license_server/Dockerfile -a cmdf-license --config license_server/fly.toml
+# health check
+curl https://cmdf-license.fly.dev/v1/health
+```
 
 ## Coding Standards
 
@@ -61,23 +134,8 @@ claudemd-forge/
 - **Type Hints**: present
 - **Imports**: absolute
 - **Path Handling**: pathlib
-- **Line Length (p95)**: 78 characters
-- **Error Handling**: Custom exception classes present
-
-## Common Commands
-
-```bash
-# test
-pytest tests/ -v
-# lint
-ruff check src/ tests/
-# format
-ruff format src/ tests/
-# type check
-mypy src/
-# claudemd-forge
-claudemd_forge.cli:app
-```
+- **Line Length**: 100 characters
+- **Error Handling**: Custom exception classes, `from exc` in re-raises
 
 ## Anti-Patterns (Do NOT Do)
 
@@ -87,73 +145,20 @@ claudemd_forge.cli:app
 - Do NOT use bare `except:` — catch specific exceptions
 - Do NOT use mutable default arguments
 - Do NOT use `print()` for logging — use the `logging` module
+- Do NOT store plaintext license keys in the database
+- Do NOT modify pricing tiers without approval
 
 ## Dependencies
 
-### Core
-- typer
-- rich
-- pydantic
-- tomli
-- pyyaml
-- jinja2
+### CLI (PyPI)
+- typer, rich, pydantic, tomli, pyyaml, jinja2
+- httpx (optional, for server validation)
+
+### License Server (Fly.io)
+- fastapi, uvicorn, pydantic, slowapi, stripe
 
 ### Dev
-- pytest
-- mypy
-- ruff
-- httpx
-
-## Domain Context
-
-### Key Models/Classes
-- `AccuracyChecker`
-- `ActivateRequest`
-- `ActivateResponse`
-- `AnalysisError`
-- `AnalysisResult`
-- `AnthropicAdapter`
-- `AntiPatternChecker`
-- `AuditFinding`
-- `AuditReport`
-- `BaseTemplate`
-- `BenchmarkCheck`
-- `BenchmarkDef`
-- `BenchmarkResult`
-- `BenchmarkSuite`
-- `CheckResult`
-
-### Domain Terms
-- AI
-- Action Add
-- Activate Pro
-- App Router
-- Audit Scoring Forge
-- CD
-- CI
-- CLAUDE
-- CMDF
-- Claude Code
-
-### API Endpoints
-- `/users`
-- `/users/{id}`
-- `/v1/activate`
-- `/v1/health`
-- `/v1/revoke`
-- `/v1/validate`
-
-### Enums/Constants
-- `CONTAINS_SECTIONS`
-- `CRITICAL`
-- `FREE`
-- `IMPROVED`
-- `JSON_VALID`
-- `LENGTH_RANGE`
-- `LLM_JUDGE`
-- `PATTERN_ABSENT`
-- `PATTERN_PRESENT`
-- `PRO`
+- pytest, mypy, ruff, httpx
 
 ## Git Conventions
 

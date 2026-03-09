@@ -20,11 +20,16 @@ class TestActivateRequest:
         req = ActivateRequest(email="test@example.com")
         assert req.email == "test@example.com"
         assert req.tier == "pro"
+        assert req.product == "claudemd-forge"
         assert req.metadata == {}
 
     def test_with_tier(self) -> None:
         req = ActivateRequest(email="t@t.com", tier="free")
         assert req.tier == "free"
+
+    def test_with_product(self) -> None:
+        req = ActivateRequest(email="t@t.com", product="agent-lint")
+        assert req.product == "agent-lint"
 
     def test_with_metadata(self) -> None:
         req = ActivateRequest(email="t@t.com", metadata={"org": "acme"})
@@ -39,11 +44,16 @@ class TestValidateRequest:
     def test_minimal(self) -> None:
         req = ValidateRequest(license_key="CMDF-ABCD-EFGH-54EF")
         assert req.license_key == "CMDF-ABCD-EFGH-54EF"
+        assert req.product == "claudemd-forge"
         assert req.machine_id is None
 
     def test_with_machine_id(self) -> None:
         req = ValidateRequest(license_key="CMDF-ABCD-EFGH-54EF", machine_id="abc123")
         assert req.machine_id == "abc123"
+
+    def test_with_product(self) -> None:
+        req = ValidateRequest(license_key="CMDF-ABCD-EFGH-54EF", product="agent-lint")
+        assert req.product == "agent-lint"
 
     def test_missing_key_raises(self) -> None:
         with pytest.raises(ValidationError):
@@ -68,10 +78,12 @@ class TestActivateResponse:
         resp = ActivateResponse(
             license_key="CMDF-ABCD-EFGH-54EF",
             tier="pro",
+            product="claudemd-forge",
             email="t@t.com",
             created_at="2026-03-01T00:00:00",
         )
         assert resp.license_key == "CMDF-ABCD-EFGH-54EF"
+        assert resp.product == "claudemd-forge"
         assert resp.active is True
         assert resp.expires_at is None
 
