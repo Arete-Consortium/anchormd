@@ -125,6 +125,8 @@ The action posts a formatted comment on your PR with score, findings, and recomm
 
 **Get Pro:** [Monthly ($8/mo)](https://buy.stripe.com/dRm6oH0KD64P9xq13VgrS00) | [Yearly ($69/yr)](https://buy.stripe.com/00w00j64X2SDaBu5kbgrS01)
 
+**All 5 Tools Bundle:** [Monthly ($29/mo)](https://buy.stripe.com/7sY9AT9h90Kv5ha27ZgrS0a) | [Yearly ($199/yr)](https://buy.stripe.com/9B6fZh9h98cX24YfYPgrS0b) — includes claudemd-forge, agent-lint, ai-spend, promptctl, context-hygiene
+
 **Activate:**
 ```bash
 export CLAUDEMD_FORGE_LICENSE=CMDF-XXXX-XXXX-XXXX
