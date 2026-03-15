@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "anchormd"
 version = "0.3.0"
-description = "Generate and audit CLAUDE.md files for AI coding agents"
+description = "Generate and audit AI agent context files — tech debt scanner, GitHub health, cleanup agent"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
 authors = [{name = "AreteDriver"}]
-keywords = ["claude", "ai", "coding-agent", "claude-code", "cursor", "windsurf"]
+keywords = ["ai", "coding-agent", "context-file", "tech-debt", "claude-code", "cursor", "windsurf"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
