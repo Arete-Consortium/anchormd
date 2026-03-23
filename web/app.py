@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json as json_module
 import logging
 import os
 import sqlite3
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import stripe
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,6 +31,15 @@ logger = logging.getLogger(__name__)
 GITHUB_CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET", "")
 ADMIN_GITHUB_USERNAME = os.environ.get("ADMIN_GITHUB_USERNAME", "AreteDriver")
+
+# Stripe configuration.
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+DEEP_SCAN_PRICE_CENTS = 2900  # $29.00 one-time
+SITE_URL = os.environ.get("SITE_URL", "https://anchormd.dev")
+
+if STRIPE_SECRET_KEY:
+    stripe.api_key = STRIPE_SECRET_KEY
 
 # Database path — configurable via env but defaults to local.
 DB_PATH = Path(__file__).parent / "scans.db"
@@ -88,12 +99,20 @@ def _init_db() -> None:
                 created_at REAL
             )
         """)
-        # Migrate: add user_id and batch_id to scans if missing.
+        # Migrate: add columns to scans if missing.
         existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(scans)").fetchall()}
         if "user_id" not in existing_cols:
             conn.execute("ALTER TABLE scans ADD COLUMN user_id INTEGER")
         if "batch_id" not in existing_cols:
             conn.execute("ALTER TABLE scans ADD COLUMN batch_id TEXT")
+        if "scan_type" not in existing_cols:
+            conn.execute("ALTER TABLE scans ADD COLUMN scan_type TEXT DEFAULT 'free'")
+        if "recommendations" not in existing_cols:
+            conn.execute("ALTER TABLE scans ADD COLUMN recommendations TEXT")
+        if "stripe_session_id" not in existing_cols:
+            conn.execute("ALTER TABLE scans ADD COLUMN stripe_session_id TEXT")
+        if "email" not in existing_cols:
+            conn.execute("ALTER TABLE scans ADD COLUMN email TEXT")
         conn.commit()
     finally:
         conn.close()
@@ -143,6 +162,7 @@ class ScanResponse(BaseModel):
     created_at: str | None = None
     completed_at: str | None = None
     batch_id: str | None = None
+    scan_type: str = "free"
 
 
 class BatchStatusResponse(BaseModel):
@@ -164,6 +184,36 @@ class RepoInfo(BaseModel):
     stargazers_count: int = 0
     updated_at: str | None = None
     html_url: str
+
+
+class CheckoutRequest(BaseModel):
+    """Request body for POST /api/checkout/deep-scan."""
+
+    repo_url: str = Field(..., description="GitHub repository URL")
+    email: str = Field(..., description="Email for receipt delivery")
+
+
+class CheckoutResponse(BaseModel):
+    """Response for checkout session creation."""
+
+    checkout_url: str
+    scan_id: str
+
+
+class DeepScanReport(BaseModel):
+    """Deep scan report response."""
+
+    scan_id: str
+    repo_url: str
+    content: str | None = None
+    score: int | None = None
+    files_scanned: int = 0
+    languages: dict[str, int] = Field(default_factory=dict)
+    recommendations: list[dict[str, Any]] = Field(default_factory=list)
+    scan_type: str = "deep"
+    status: str = "pending"
+    created_at: str | None = None
+    completed_at: str | None = None
 
 
 class AdminMetrics(BaseModel):
@@ -510,6 +560,7 @@ async def get_scan(scan_id: str) -> ScanResponse:
         created_at=row_dict.get("created_at"),
         completed_at=row_dict.get("completed_at"),
         batch_id=row_dict.get("batch_id"),
+        scan_type=row_dict.get("scan_type", "free"),
     )
 
 
@@ -596,6 +647,288 @@ async def get_batch_status(batch_id: str) -> BatchStatusResponse:
         repo_count=batch_dict["repo_count"],
         completed=batch_dict["completed"],
         scans=[dict(r) for r in scan_rows],
+    )
+
+
+# --- Deep Scan Logic ---
+
+
+def _generate_recommendations(content: str, score: int) -> list[dict[str, Any]]:
+    """Generate architecture recommendations based on scan results."""
+    recommendations: list[dict[str, Any]] = []
+
+    checks = [
+        (
+            "## Anti-Patterns" not in content,
+            "high",
+            "Add Anti-Patterns Section",
+            "Define explicit anti-patterns to prevent common mistakes. "
+            "Include rules like no bare except, no mutable defaults, no print debugging.",
+        ),
+        (
+            "## Testing" not in content and "test" not in content.lower(),
+            "high",
+            "Add Testing Standards",
+            "Document test frameworks, coverage targets, and testing conventions. "
+            "AI agents write better tests when standards are explicit.",
+        ),
+        (
+            "## Environment" not in content and "env" not in content.lower(),
+            "medium",
+            "Document Environment Variables",
+            "List required environment variables with descriptions. "
+            "Prevents accidental credential exposure and misconfiguration.",
+        ),
+        (
+            "## Architecture" not in content,
+            "medium",
+            "Add Architecture Overview",
+            "Include a directory tree and component descriptions. "
+            "Helps AI agents understand project structure without exploring.",
+        ),
+        (
+            "## Dependencies" not in content,
+            "low",
+            "Document Dependencies",
+            "List key dependencies and their purposes. "
+            "Prevents AI agents from introducing conflicting packages.",
+        ),
+        (
+            "## CI/CD" not in content and "workflow" not in content.lower(),
+            "medium",
+            "Add CI/CD Documentation",
+            "Document build, test, and deploy workflows. "
+            "AI agents can then update CI configs correctly.",
+        ),
+        (
+            "## Security" not in content,
+            "high",
+            "Add Security Guidelines",
+            "Document credential handling, input validation, and security policies. "
+            "Critical for preventing AI-generated security vulnerabilities.",
+        ),
+        (
+            score < 60,
+            "high",
+            "Improve Overall Coverage",
+            f"Current score is {score}/100. Focus on adding missing sections "
+            "to give AI agents comprehensive context about your codebase.",
+        ),
+    ]
+
+    for condition, priority, title, description in checks:
+        if condition:
+            recommendations.append(
+                {"priority": priority, "title": title, "description": description}
+            )
+
+    return recommendations
+
+
+def _run_deep_scan(scan_id: str, repo_url: str) -> None:
+    """Execute a deep scan (same generation + recommendations)."""
+    result = generate_claude_md(repo_url)
+
+    conn = _get_db()
+    try:
+        now = datetime.now(UTC).isoformat()
+        if result.error:
+            conn.execute(
+                """
+                UPDATE scans SET status = 'error', error = ?, completed_at = ?
+                WHERE scan_id = ?
+                """,
+                (result.error, now, scan_id),
+            )
+        else:
+            recs = _generate_recommendations(result.content, result.score)
+            conn.execute(
+                """
+                UPDATE scans
+                SET status = 'complete', content = ?, score = ?,
+                    files_scanned = ?, languages = ?, completed_at = ?,
+                    recommendations = ?
+                WHERE scan_id = ?
+                """,
+                (
+                    result.content,
+                    result.score,
+                    result.files_scanned,
+                    json_module.dumps(result.languages),
+                    now,
+                    json_module.dumps(recs),
+                    scan_id,
+                ),
+            )
+        conn.commit()
+    except Exception:
+        logger.exception("Failed to update deep scan %s", scan_id)
+    finally:
+        conn.close()
+
+
+# --- API Routes: Stripe Checkout ---
+
+
+@app.post("/api/checkout/deep-scan", response_model=CheckoutResponse)
+async def create_deep_scan_checkout(request: CheckoutRequest) -> CheckoutResponse:
+    """Create a Stripe Checkout session for a $29 deep scan."""
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=500, detail="Stripe not configured")
+
+    # Pre-create the scan record so we have an ID for the success URL.
+    scan_id = _make_scan_id(request.repo_url)
+    now = datetime.now(UTC).isoformat()
+
+    conn = _get_db()
+    try:
+        conn.execute(
+            """
+            INSERT INTO scans (scan_id, repo_url, status, created_at, scan_type, email)
+            VALUES (?, ?, 'awaiting_payment', ?, 'deep', ?)
+            """,
+            (scan_id, request.repo_url, now, request.email),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    try:
+        session = stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            line_items=[
+                {
+                    "price_data": {
+                        "currency": "usd",
+                        "product_data": {
+                            "name": "anchormd Deep Scan",
+                            "description": (
+                                "Full audit report with architecture recommendations "
+                                "for your repository."
+                            ),
+                        },
+                        "unit_amount": DEEP_SCAN_PRICE_CENTS,
+                    },
+                    "quantity": 1,
+                }
+            ],
+            mode="payment",
+            customer_email=request.email,
+            success_url=f"{SITE_URL}/?deep_scan={scan_id}",
+            cancel_url=f"{SITE_URL}/",
+            metadata={
+                "product": "deep_scan",
+                "repo_url": request.repo_url,
+                "scan_id": scan_id,
+            },
+        )
+    except stripe.StripeError as exc:
+        logger.error("Stripe checkout creation failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Payment service error") from exc
+
+    # Store stripe session ID.
+    conn = _get_db()
+    try:
+        conn.execute(
+            "UPDATE scans SET stripe_session_id = ? WHERE scan_id = ?",
+            (session.id, scan_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return CheckoutResponse(checkout_url=session.url, scan_id=scan_id)
+
+
+# --- API Routes: Stripe Webhook ---
+
+
+@app.post("/api/webhooks/stripe")
+async def stripe_webhook(request: Request, background_tasks: BackgroundTasks) -> dict[str, str]:
+    """Handle Stripe webhook events (checkout.session.completed)."""
+    if not STRIPE_WEBHOOK_SECRET:
+        raise HTTPException(status_code=500, detail="Webhook secret not configured")
+
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature", "")
+
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid payload") from exc
+    except stripe.SignatureVerificationError as exc:
+        raise HTTPException(status_code=400, detail="Invalid signature") from exc
+
+    if event["type"] == "checkout.session.completed":
+        session = event["data"]["object"]
+        metadata = session.get("metadata", {})
+
+        if metadata.get("product") == "deep_scan":
+            scan_id = metadata.get("scan_id")
+            repo_url = metadata.get("repo_url")
+
+            if scan_id and repo_url:
+                # Update status to pending (payment confirmed, scan starting).
+                conn = _get_db()
+                try:
+                    conn.execute(
+                        "UPDATE scans SET status = 'pending' WHERE scan_id = ?",
+                        (scan_id,),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+
+                # Trigger deep scan in background.
+                background_tasks.add_task(_run_deep_scan, scan_id, repo_url)
+
+    return {"status": "ok"}
+
+
+# --- API Routes: Deep Scan Report ---
+
+
+@app.get("/api/scan/{scan_id}/report", response_model=DeepScanReport)
+async def get_deep_scan_report(scan_id: str) -> DeepScanReport:
+    """Retrieve a deep scan report. Only available for paid deep scans."""
+    conn = _get_db()
+    try:
+        row = conn.execute("SELECT * FROM scans WHERE scan_id = ?", (scan_id,)).fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    row_dict = dict(row)
+
+    if row_dict.get("scan_type") != "deep":
+        raise HTTPException(status_code=403, detail="Deep scan report requires payment")
+
+    languages_raw = row_dict.get("languages", "{}")
+    try:
+        languages = json_module.loads(languages_raw) if languages_raw else {}
+    except (json_module.JSONDecodeError, TypeError):
+        languages = {}
+
+    recs_raw = row_dict.get("recommendations", "[]")
+    try:
+        recommendations = json_module.loads(recs_raw) if recs_raw else []
+    except (json_module.JSONDecodeError, TypeError):
+        recommendations = []
+
+    return DeepScanReport(
+        scan_id=row_dict["scan_id"],
+        repo_url=row_dict["repo_url"],
+        content=row_dict.get("content"),
+        score=row_dict.get("score"),
+        files_scanned=row_dict.get("files_scanned", 0),
+        languages=languages,
+        recommendations=recommendations,
+        scan_type="deep",
+        status=row_dict["status"],
+        created_at=row_dict.get("created_at"),
+        completed_at=row_dict.get("completed_at"),
     )
 
 

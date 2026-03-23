@@ -1,7 +1,7 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import { useAuth } from "./AuthContext";
-import { getGitHubLoginUrl } from "./api";
+import { getGitHubLoginUrl, createDeepScanCheckout, getDeepScanReport } from "./api";
 import ReposPage from "./ReposPage";
 import AdminPage from "./AdminPage";
 
@@ -56,6 +56,199 @@ function GitHubIcon() {
   );
 }
 
+function PriorityBadge({ priority }) {
+  const colors = {
+    high: "bg-red-500/20 text-red-400 border-red-500/30",
+    medium: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+    low: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  };
+  return (
+    <span
+      className={`text-xs font-medium px-2 py-0.5 rounded border ${colors[priority] || colors.low}`}
+    >
+      {priority.toUpperCase()}
+    </span>
+  );
+}
+
+function DeepScanCTA({ repoUrl, onCheckout }) {
+  const [email, setEmail] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [ctaError, setCtaError] = useState(null);
+
+  const handleCheckout = async () => {
+    if (!email.trim()) return;
+    setSubmitting(true);
+    setCtaError(null);
+    try {
+      const data = await onCheckout(repoUrl, email.trim());
+      window.location.href = data.checkout_url;
+    } catch (err) {
+      setCtaError(err.message);
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="bg-gradient-to-r from-anchor-900/50 to-anchor-800/30 border border-anchor-700/50 rounded-lg p-6 mt-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="flex-1">
+          <h3 className="text-white font-semibold text-lg mb-1">
+            Want deeper analysis?
+          </h3>
+          <p className="text-gray-400 text-sm">
+            Get a full audit report with architecture recommendations, security
+            review, and actionable improvements for{" "}
+            <span className="text-white font-medium">$29</span> (one-time).
+          </p>
+        </div>
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@email.com"
+            className="bg-gray-900 border border-gray-700 rounded-md px-3 py-2 text-white text-sm
+                       placeholder-gray-500 focus:outline-none focus:border-anchor-500 w-full sm:w-52"
+          />
+          <button
+            onClick={handleCheckout}
+            disabled={submitting || !email.trim()}
+            className="bg-anchor-600 hover:bg-anchor-700 disabled:bg-gray-700 disabled:text-gray-500
+                       text-white font-semibold px-5 py-2 rounded-md transition-colors text-sm
+                       whitespace-nowrap"
+          >
+            {submitting ? "Redirecting..." : "Get Deep Report"}
+          </button>
+        </div>
+      </div>
+      {ctaError && (
+        <p className="text-red-400 text-sm mt-2">{ctaError}</p>
+      )}
+    </div>
+  );
+}
+
+function DeepScanReportView({ report }) {
+  const [showRaw, setShowRaw] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    if (!report?.content) return;
+    try {
+      await navigator.clipboard.writeText(report.content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = report.content;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  if (report.status === "pending" || report.status === "awaiting_payment") {
+    return (
+      <div className="pt-12">
+        <LoadingSpinner />
+        <p className="text-center text-gray-400 text-sm mt-4">
+          {report.status === "awaiting_payment"
+            ? "Waiting for payment confirmation..."
+            : "Deep scan in progress..."}
+        </p>
+      </div>
+    );
+  }
+
+  if (report.status === "error") {
+    return (
+      <div className="bg-red-950/50 border border-red-800 rounded-lg p-4 mt-8">
+        <p className="text-red-400 text-sm">Deep scan failed: {report.error || "Unknown error"}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="pb-12 pt-6">
+      <div className="flex items-center gap-3 mb-6">
+        <span className="bg-anchor-600 text-white text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide">
+          Deep Scan
+        </span>
+        <ScoreBadge score={report.score} />
+        <span className="text-gray-400 text-sm">
+          {report.files_scanned} files scanned
+        </span>
+      </div>
+
+      {/* Recommendations */}
+      {report.recommendations && report.recommendations.length > 0 && (
+        <div className="mb-8">
+          <h2 className="text-white text-xl font-semibold mb-4">
+            Recommendations
+          </h2>
+          <div className="space-y-3">
+            {report.recommendations.map((rec, i) => (
+              <div
+                key={i}
+                className="bg-gray-900 border border-gray-700 rounded-lg p-4"
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <PriorityBadge priority={rec.priority} />
+                  <h3 className="text-white font-medium">{rec.title}</h3>
+                </div>
+                <p className="text-gray-400 text-sm">{rec.description}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Generated CLAUDE.md */}
+      <div className="mb-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-white text-xl font-semibold">
+            Generated CLAUDE.md
+          </h2>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowRaw(!showRaw)}
+              className="text-gray-400 hover:text-gray-200 text-sm px-3 py-1.5
+                         border border-gray-700 rounded-md transition-colors"
+            >
+              {showRaw ? "Preview" : "Raw"}
+            </button>
+            <button
+              onClick={handleCopy}
+              className={`text-sm px-4 py-1.5 rounded-md font-medium transition-colors ${
+                copied
+                  ? "bg-green-600 text-white"
+                  : "bg-anchor-600 hover:bg-anchor-700 text-white"
+              }`}
+            >
+              {copied ? "Copied!" : "Copy"}
+            </button>
+          </div>
+        </div>
+        <div className="bg-gray-900 border border-gray-700 rounded-lg overflow-hidden">
+          {showRaw ? (
+            <pre className="p-6 text-sm text-gray-300 font-mono whitespace-pre-wrap overflow-x-auto">
+              {report.content}
+            </pre>
+          ) : (
+            <div className="p-6 markdown-output">
+              <ReactMarkdown>{report.content}</ReactMarkdown>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const { user, loading: authLoading, logout } = useAuth();
   const [page, setPage] = useState("home"); // "home" | "repos" | "admin"
@@ -65,6 +258,35 @@ export default function App() {
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
   const [showRaw, setShowRaw] = useState(false);
+  const [deepReport, setDeepReport] = useState(null);
+  const [deepLoading, setDeepLoading] = useState(false);
+
+  // Check for ?deep_scan= parameter on load.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const deepScanId = params.get("deep_scan");
+    if (deepScanId) {
+      setDeepLoading(true);
+      const pollDeep = async () => {
+        for (let i = 0; i < MAX_POLLS; i++) {
+          try {
+            const data = await getDeepScanReport(deepScanId);
+            if (data.status === "complete" || data.status === "error") {
+              setDeepReport(data);
+              setDeepLoading(false);
+              return;
+            }
+          } catch {
+            // Report endpoint may 404 briefly while scan starts.
+          }
+          await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+        }
+        setDeepReport({ status: "error", error: "Timed out waiting for deep scan results." });
+        setDeepLoading(false);
+      };
+      pollDeep();
+    }
+  }, []);
 
   const pollForResult = useCallback(async (scanId) => {
     for (let i = 0; i < MAX_POLLS; i++) {
@@ -307,7 +529,19 @@ export default function App() {
 
       {/* Main Content */}
       <main className="flex-1 max-w-5xl mx-auto px-4 w-full">
-        {page === "repos" && user ? (
+        {/* Deep Scan Report View */}
+        {(deepReport || deepLoading) ? (
+          deepLoading ? (
+            <div className="pt-12">
+              <LoadingSpinner />
+              <p className="text-center text-gray-400 text-sm mt-4">
+                Loading deep scan report...
+              </p>
+            </div>
+          ) : (
+            <DeepScanReportView report={deepReport} />
+          )
+        ) : page === "repos" && user ? (
           <ReposPage />
         ) : page === "admin" && user?.is_admin ? (
           <AdminPage />
@@ -426,6 +660,14 @@ export default function App() {
                     </div>
                   )}
                 </div>
+
+                {/* Deep Scan CTA — shown after free scan completes */}
+                {result.scan_type !== "deep" && (
+                  <DeepScanCTA
+                    repoUrl={result.repo_url}
+                    onCheckout={createDeepScanCheckout}
+                  />
+                )}
               </div>
             )}
 

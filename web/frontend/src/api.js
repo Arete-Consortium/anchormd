@@ -96,3 +96,11 @@ export async function getBatchStatus(batchId) {
 export async function getAdminMetrics() {
   return apiGet("/api/admin/metrics");
 }
+
+export async function createDeepScanCheckout(repoUrl, email) {
+  return apiPost("/api/checkout/deep-scan", { repo_url: repoUrl, email });
+}
+
+export async function getDeepScanReport(scanId) {
+  return apiGet(`/api/scan/${scanId}/report`);
+}
