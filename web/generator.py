@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -85,7 +86,12 @@ def clone_repo(url: str, dest: Path, token: str | None = None) -> None:
             capture_output=True,
             text=True,
             timeout=_CLONE_TIMEOUT,
+            env={**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0"},
         )
+        # Disable git hooks post-clone to prevent arbitrary code execution
+        hooks_dir = dest / ".git" / "hooks"
+        if hooks_dir.exists():
+            shutil.rmtree(hooks_dir)
         if result.returncode != 0:
             stderr = result.stderr.strip()
             if "not found" in stderr.lower() or "404" in stderr:
