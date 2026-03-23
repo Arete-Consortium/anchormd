@@ -112,3 +112,7 @@ export async function getFixReport(scanId) {
 export async function pushPR(scanId, options = {}) {
   return apiPost(`/api/scan/${scanId}/push-pr`, options);
 }
+
+export async function getCursorRules(scanId) {
+  return apiGet(`/api/scan/${scanId}/cursorrules`);
+}

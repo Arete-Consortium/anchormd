@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "./AuthContext";
-import { listRepos, scanRepo, getScan, scanAll, getBatchStatus, getFixReport, pushPR } from "./api";
+import { listRepos, scanRepo, getScan, scanAll, getBatchStatus, getFixReport, pushPR, getCursorRules } from "./api";
 import ReactMarkdown from "react-markdown";
 
 const POLL_INTERVAL = 2000;
@@ -204,6 +204,24 @@ export default function ReposPage() {
     );
   }
 
+  const handleDownloadCursorRules = async (scan) => {
+    if (!scan?.scan_id) return;
+    try {
+      const data = await getCursorRules(scan.scan_id);
+      const blob = new Blob([data.content], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = ".cursorrules";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      // Silent fail.
+    }
+  };
+
   const handlePushPR = async (scan) => {
     if (!scan?.scan_id) return;
     setPrPushing(true);
@@ -264,6 +282,12 @@ export default function ReposPage() {
               className="text-gray-400 hover:text-gray-200 text-sm px-3 py-1.5 border border-gray-700 rounded-md"
             >
               {showRaw ? "Preview" : "Raw"}
+            </button>
+            <button
+              onClick={() => handleDownloadCursorRules(selectedScan)}
+              className="text-gray-400 hover:text-gray-200 text-sm px-3 py-1.5 border border-gray-700 rounded-md"
+            >
+              .cursorrules
             </button>
             {selectedScan.score != null && selectedScan.score < 100 && (
               <button

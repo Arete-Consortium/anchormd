@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import { useAuth } from "./AuthContext";
-import { getGitHubLoginUrl, createDeepScanCheckout, getDeepScanReport, getFixReport, pushPR } from "./api";
+import { getGitHubLoginUrl, createDeepScanCheckout, getDeepScanReport, getFixReport, pushPR, getCursorRules } from "./api";
 import ReposPage from "./ReposPage";
 import AdminPage from "./AdminPage";
 
@@ -418,6 +418,24 @@ export default function App() {
     }
   };
 
+  const handleDownloadCursorRules = async () => {
+    if (!result?.scan_id) return;
+    try {
+      const data = await getCursorRules(result.scan_id);
+      const blob = new Blob([data.content], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = ".cursorrules";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const handleLogin = async () => {
     try {
       const data = await getGitHubLoginUrl();
@@ -593,11 +611,21 @@ export default function App() {
                   GitHub URL in.{" "}
                   <span className="text-anchor-400">CLAUDE.md</span> out.
                 </h1>
-                <p className="text-gray-400 text-lg max-w-2xl mx-auto">
+                <p className="text-gray-400 text-lg max-w-2xl mx-auto mb-4">
                   Paste a public GitHub repo URL and get a production-ready AI
                   agent context file in seconds.
                   {!user && " Sign in to scan private repos."}
                 </p>
+                <div className="flex items-center justify-center gap-3 text-gray-500 text-sm">
+                  <span>Works with</span>
+                  <span className="text-gray-300 font-medium">Claude Code</span>
+                  <span>&middot;</span>
+                  <span className="text-gray-300 font-medium">Cursor</span>
+                  <span>&middot;</span>
+                  <span className="text-gray-300 font-medium">Copilot</span>
+                  <span>&middot;</span>
+                  <span className="text-gray-300 font-medium">Windsurf</span>
+                </div>
               </div>
             )}
 
@@ -675,6 +703,13 @@ export default function App() {
                     >
                       Share Link
                     </button>
+                    <button
+                      onClick={handleDownloadCursorRules}
+                      className="text-gray-400 hover:text-gray-200 text-sm px-3 py-1.5
+                                 border border-gray-700 rounded-md transition-colors"
+                    >
+                      .cursorrules
+                    </button>
                     {result.score < 100 && (
                       <button
                         onClick={handleDownloadFixReport}
@@ -746,32 +781,62 @@ export default function App() {
 
             {/* Features (only on landing) */}
             {!result && !loading && (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-8 pb-16">
-                <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
-                  <div className="text-anchor-400 text-2xl mb-3">&#9889;</div>
-                  <h3 className="text-white font-semibold mb-2">Instant</h3>
-                  <p className="text-gray-400 text-sm">
-                    Scans your repo, detects languages, frameworks, patterns, and
-                    generates a complete CLAUDE.md in seconds.
-                  </p>
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-8 pb-8">
+                  <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
+                    <div className="text-anchor-400 text-2xl mb-3">&#9889;</div>
+                    <h3 className="text-white font-semibold mb-2">Instant Scan</h3>
+                    <p className="text-gray-400 text-sm">
+                      Paste a URL, get a scored CLAUDE.md in 30 seconds. 8 analyzers
+                      detect your actual code patterns, not templates.
+                    </p>
+                  </div>
+                  <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
+                    <div className="text-anchor-400 text-2xl mb-3">&#128295;</div>
+                    <h3 className="text-white font-semibold mb-2">Fix Report</h3>
+                    <p className="text-gray-400 text-sm">
+                      Score under 100? Download a fix report with gap analysis,
+                      copy-paste templates, and a Claude Code prompt to auto-fix.
+                    </p>
+                  </div>
+                  <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
+                    <div className="text-anchor-400 text-2xl mb-3">&#128640;</div>
+                    <h3 className="text-white font-semibold mb-2">Push to Repo</h3>
+                    <p className="text-gray-400 text-sm">
+                      One click creates a PR with your CLAUDE.md. Also exports
+                      as .cursorrules for Cursor users.
+                    </p>
+                  </div>
                 </div>
-                <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
-                  <div className="text-anchor-400 text-2xl mb-3">&#128270;</div>
-                  <h3 className="text-white font-semibold mb-2">Smart Analysis</h3>
-                  <p className="text-gray-400 text-sm">
-                    8 analyzers detect your tech stack, coding standards,
-                    anti-patterns, dependencies, and domain context.
-                  </p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pb-16">
+                  <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
+                    <div className="text-anchor-400 text-2xl mb-3">&#128274;</div>
+                    <h3 className="text-white font-semibold mb-2">Private Repos</h3>
+                    <p className="text-gray-400 text-sm">
+                      Sign in with GitHub to scan private repos and batch-scan
+                      your entire account.
+                    </p>
+                  </div>
+                  <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
+                    <div className="text-anchor-400 text-2xl mb-3">&#9889;</div>
+                    <h3 className="text-white font-semibold mb-2">Smart Caching</h3>
+                    <p className="text-gray-400 text-sm">
+                      Re-scans skip repos that already scored 100 and have no new
+                      pushes. Only scan what changed.
+                    </p>
+                  </div>
+                  <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
+                    <div className="text-anchor-400 text-2xl mb-3">&#128187;</div>
+                    <h3 className="text-white font-semibold mb-2">CLI Too</h3>
+                    <p className="text-gray-400 text-sm">
+                      <code className="text-anchor-300 text-xs">pip install anchormd</code>
+                      {" "}&mdash; run locally in any project directory.
+                      Pro tier for init, diff, and tech debt.
+                    </p>
+                  </div>
                 </div>
-                <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
-                  <div className="text-anchor-400 text-2xl mb-3">&#128274;</div>
-                  <h3 className="text-white font-semibold mb-2">Private Repos</h3>
-                  <p className="text-gray-400 text-sm">
-                    Sign in with GitHub to scan private repositories and manage
-                    all your repos from one dashboard.
-                  </p>
-                </div>
-              </div>
+              </>
+
             )}
           </>
         )}

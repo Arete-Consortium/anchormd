@@ -1500,6 +1500,58 @@ async def get_fix_report(scan_id: str) -> dict[str, Any]:
     }
 
 
+@app.get("/api/scan/{scan_id}/cursorrules")
+async def get_cursorrules(scan_id: str) -> dict[str, Any]:
+    """Convert a scan result to .cursorrules format for Cursor IDE."""
+    import re
+
+    conn = _get_db()
+    try:
+        row = conn.execute("SELECT * FROM scans WHERE scan_id = ?", (scan_id,)).fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    row_dict = dict(row)
+    if row_dict["status"] != "complete" or not row_dict.get("content"):
+        raise HTTPException(status_code=400, detail="Scan not complete")
+
+    content = row_dict["content"]
+
+    # Transform CLAUDE.md → .cursorrules format.
+    # 1. Strip the "# CLAUDE.md — project" header, replace with cursorrules-style.
+    content = re.sub(r"^# CLAUDE\.md — .+\n*", "", content)
+
+    # 2. Rename section headings to Cursor conventions.
+    renames = {
+        "## Project Overview": "## Project Context",
+        "## Anti-Patterns": "## Avoid",
+        "## Common Commands": "## Commands",
+        "## Git Conventions": "## Git",
+    }
+    for old, new in renames.items():
+        content = content.replace(old, new)
+
+    # 3. Add cursorrules preamble.
+    repo_url = row_dict["repo_url"]
+    repo_name = repo_url.rstrip("/").split("/")[-1].replace(".git", "")
+    cursorrules = (
+        f"# Cursor Rules — {repo_name}\n\n"
+        "You are an expert developer working on this project. "
+        "Follow these rules strictly.\n\n"
+        + content.strip()
+        + "\n"
+    )
+
+    return {
+        "scan_id": scan_id,
+        "content": cursorrules,
+        "filename": ".cursorrules",
+    }
+
+
 @app.get("/api/health")
 async def health() -> dict[str, str]:
     """Health check."""
