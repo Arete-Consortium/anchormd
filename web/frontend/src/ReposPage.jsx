@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "./AuthContext";
-import { listRepos, scanRepo, getScan, scanAll, getBatchStatus } from "./api";
+import { listRepos, scanRepo, getScan, scanAll, getBatchStatus, getFixReport } from "./api";
 import ReactMarkdown from "react-markdown";
 
 const POLL_INTERVAL = 2000;
@@ -57,6 +57,7 @@ export default function ReposPage() {
   // Selected scan to view
   const [selectedScan, setSelectedScan] = useState(null);
   const [showRaw, setShowRaw] = useState(false);
+  const [fixDownloading, setFixDownloading] = useState(false);
 
   useEffect(() => {
     listRepos()
@@ -194,6 +195,28 @@ export default function ReposPage() {
     );
   }
 
+  const handleDownloadFixReport = async (scan) => {
+    if (!scan?.scan_id) return;
+    setFixDownloading(true);
+    try {
+      const data = await getFixReport(scan.scan_id);
+      const blob = new Blob([data.markdown], { type: "text/markdown" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const repoName = (scan.repo_url || "").split("/").pop()?.replace(".git", "") || "repo";
+      a.href = url;
+      a.download = `${repoName}-fix-report.md`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      // Silent fail for fix report download.
+    } finally {
+      setFixDownloading(false);
+    }
+  };
+
   // If viewing a specific scan result.
   if (selectedScan) {
     return (
@@ -219,6 +242,17 @@ export default function ReposPage() {
             >
               {showRaw ? "Preview" : "Raw"}
             </button>
+            {selectedScan.score != null && selectedScan.score < 100 && (
+              <button
+                onClick={() => handleDownloadFixReport(selectedScan)}
+                disabled={fixDownloading}
+                className="text-sm px-4 py-1.5 rounded-md font-medium transition-colors
+                           bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-700
+                           disabled:text-gray-500 text-white"
+              >
+                {fixDownloading ? "Generating..." : "Fix Report"}
+              </button>
+            )}
             <button
               onClick={() => {
                 if (selectedScan.content) {

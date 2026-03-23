@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import { useAuth } from "./AuthContext";
-import { getGitHubLoginUrl, createDeepScanCheckout, getDeepScanReport } from "./api";
+import { getGitHubLoginUrl, createDeepScanCheckout, getDeepScanReport, getFixReport } from "./api";
 import ReposPage from "./ReposPage";
 import AdminPage from "./AdminPage";
 
@@ -260,6 +260,7 @@ export default function App() {
   const [showRaw, setShowRaw] = useState(false);
   const [deepReport, setDeepReport] = useState(null);
   const [deepLoading, setDeepLoading] = useState(false);
+  const [fixDownloading, setFixDownloading] = useState(false);
 
   // Check for ?deep_scan= parameter on load.
   useEffect(() => {
@@ -377,6 +378,28 @@ export default function App() {
     if (!result?.scan_id) return;
     const shareUrl = `${window.location.origin}?scan=${result.scan_id}`;
     navigator.clipboard.writeText(shareUrl);
+  };
+
+  const handleDownloadFixReport = async () => {
+    if (!result?.scan_id) return;
+    setFixDownloading(true);
+    try {
+      const data = await getFixReport(result.scan_id);
+      const blob = new Blob([data.markdown], { type: "text/markdown" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const repoName = (result.repo_url || "").split("/").pop()?.replace(".git", "") || "repo";
+      a.href = url;
+      a.download = `${repoName}-fix-report.md`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setFixDownloading(false);
+    }
   };
 
   const handleLogin = async () => {
@@ -636,6 +659,17 @@ export default function App() {
                     >
                       Share Link
                     </button>
+                    {result.score < 100 && (
+                      <button
+                        onClick={handleDownloadFixReport}
+                        disabled={fixDownloading}
+                        className="text-sm px-4 py-1.5 rounded-md font-medium transition-colors
+                                   bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-700
+                                   disabled:text-gray-500 text-white"
+                      >
+                        {fixDownloading ? "Generating..." : "Fix Report"}
+                      </button>
+                    )}
                     <button
                       onClick={handleCopy}
                       className={`text-sm px-4 py-1.5 rounded-md font-medium transition-colors ${

@@ -104,3 +104,7 @@ export async function createDeepScanCheckout(repoUrl, email) {
 export async function getDeepScanReport(scanId) {
   return apiGet(`/api/scan/${scanId}/report`);
 }
+
+export async function getFixReport(scanId) {
+  return apiGet(`/api/scan/${scanId}/fix-report`);
+}

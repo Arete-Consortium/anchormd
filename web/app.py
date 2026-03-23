@@ -1004,6 +1004,269 @@ async def admin_metrics(
     )
 
 
+@app.get("/api/scan/{scan_id}/fix-report")
+async def get_fix_report(scan_id: str) -> dict[str, Any]:
+    """Generate a downloadable fix report with gap analysis and instructions."""
+    import json
+    import re
+
+    conn = _get_db()
+    try:
+        row = conn.execute("SELECT * FROM scans WHERE scan_id = ?", (scan_id,)).fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    row_dict = dict(row)
+    if row_dict["status"] != "complete":
+        raise HTTPException(status_code=400, detail="Scan not complete")
+
+    content = row_dict.get("content", "") or ""
+    score = row_dict.get("score", 0) or 0
+    repo_url = row_dict["repo_url"]
+    files_scanned = row_dict.get("files_scanned", 0) or 0
+
+    languages_raw = row_dict.get("languages", "{}")
+    try:
+        languages = json.loads(languages_raw) if languages_raw else {}
+    except (json.JSONDecodeError, TypeError):
+        languages = {}
+
+    # --- Score breakdown ---
+    expected_headings = [
+        "Project Overview",
+        "Current State",
+        "Architecture",
+        "Tech Stack",
+        "Coding Standards",
+        "Common Commands",
+        "Anti-Patterns",
+        "Dependencies",
+        "Git Conventions",
+    ]
+    present_headings = [h for h in expected_headings if f"## {h}" in content]
+    missing_headings = [h for h in expected_headings if f"## {h}" not in content]
+
+    lines = content.splitlines()
+    line_count = len(lines)
+    code_block_count = content.count("```") // 2  # pairs
+    bold_bullets = len(re.findall(r"- \*\*\w+", content))
+
+    # Calculate sub-scores
+    section_score = int((len(present_headings) / len(expected_headings)) * 60)
+    depth_score = (10 if line_count > 50 else 0) + (5 if line_count > 100 else 0) + (5 if line_count > 150 else 0)
+    code_score = 10 if code_block_count >= 2 else (5 if code_block_count >= 1 else 0)
+    spec_score = 10 if bold_bullets > 5 else (5 if bold_bullets > 2 else 0)
+
+    # --- Build fix actions sorted by point impact ---
+    actions: list[dict[str, Any]] = []
+
+    for heading in missing_headings:
+        pts = round(60 / len(expected_headings))
+        actions.append({
+            "priority": "high" if pts >= 6 else "medium",
+            "action": f"Add `## {heading}` section",
+            "points": pts,
+            "category": "sections",
+        })
+
+    if line_count <= 50:
+        actions.append({
+            "priority": "high",
+            "action": "Expand content to 150+ lines for full depth score (+20 pts)",
+            "points": 20,
+            "category": "depth",
+        })
+    elif line_count <= 100:
+        actions.append({
+            "priority": "medium",
+            "action": "Expand content to 150+ lines (+10 pts remaining)",
+            "points": 10,
+            "category": "depth",
+        })
+    elif line_count <= 150:
+        actions.append({
+            "priority": "low",
+            "action": "Expand content past 150 lines (+5 pts remaining)",
+            "points": 5,
+            "category": "depth",
+        })
+
+    if code_block_count < 2:
+        pts = 10 - code_score
+        actions.append({
+            "priority": "medium",
+            "action": f"Add code blocks (need {2 - code_block_count} more) for full code score",
+            "points": pts,
+            "category": "code_blocks",
+        })
+
+    if bold_bullets <= 5:
+        pts = 10 - spec_score
+        actions.append({
+            "priority": "medium",
+            "action": f"Add bold-label bullets (`- **Key**: value`) — need {6 - bold_bullets} more",
+            "points": pts,
+            "category": "specificity",
+        })
+
+    actions.sort(key=lambda a: a["points"], reverse=True)
+
+    # --- Section templates for missing headings ---
+    section_templates = {
+        "Project Overview": (
+            "## Project Overview\n\n"
+            "One-paragraph description of what this project does, who it's for, and its current maturity.\n\n"
+            "- **Purpose**: [What problem does it solve?]\n"
+            "- **Users**: [Who uses it?]\n"
+            "- **Status**: [Alpha/Beta/Production]\n"
+        ),
+        "Current State": (
+            "## Current State\n\n"
+            "- **Version**: [x.y.z]\n"
+            "- **Language**: [Primary language]\n"
+            "- **Tests**: [count]\n"
+            "- **Coverage**: [percentage]\n"
+            "- **CI**: [passing/failing]\n"
+        ),
+        "Architecture": (
+            "## Architecture\n\n"
+            "```\nproject/\n"
+            "├── src/          # Source code\n"
+            "├── tests/        # Test suite\n"
+            "├── docs/         # Documentation\n"
+            "└── config/       # Configuration\n```\n\n"
+            "Describe key modules, their responsibilities, and how data flows between them.\n"
+        ),
+        "Tech Stack": (
+            "## Tech Stack\n\n"
+            "- **Language**: [e.g., Python 3.12]\n"
+            "- **Framework**: [e.g., FastAPI, React]\n"
+            "- **Database**: [e.g., PostgreSQL, SQLite]\n"
+            "- **Testing**: [e.g., pytest, Jest]\n"
+            "- **CI/CD**: [e.g., GitHub Actions]\n"
+        ),
+        "Coding Standards": (
+            "## Coding Standards\n\n"
+            "- **Style**: [e.g., PEP 8, Airbnb JS]\n"
+            "- **Naming**: [e.g., snake_case for Python]\n"
+            "- **Type Hints**: [present/required]\n"
+            "- **Line Length**: [e.g., 100 chars]\n"
+            "- **Imports**: [absolute/relative, ordering]\n"
+        ),
+        "Common Commands": (
+            "## Common Commands\n\n"
+            "```bash\n"
+            "# Install dependencies\n[your install command]\n\n"
+            "# Run tests\n[your test command]\n\n"
+            "# Lint / format\n[your lint command]\n\n"
+            "# Build\n[your build command]\n```\n"
+        ),
+        "Anti-Patterns": (
+            "## Anti-Patterns\n\n"
+            "- Do NOT [common mistake in this codebase]\n"
+            "- Do NOT [security anti-pattern]\n"
+            "- Do NOT [style violation]\n"
+        ),
+        "Dependencies": (
+            "## Dependencies\n\n"
+            "### Runtime\n- [package]: [purpose]\n\n"
+            "### Dev\n- [package]: [purpose]\n"
+        ),
+        "Git Conventions": (
+            "## Git Conventions\n\n"
+            "- **Commit style**: [e.g., Conventional commits: feat:, fix:, docs:]\n"
+            "- **Branch naming**: [e.g., feat/description, fix/description]\n"
+            "- **Review**: [e.g., PR required, 1 approval]\n"
+        ),
+    }
+
+    # --- Build the markdown report ---
+    repo_name = repo_url.rstrip("/").split("/")[-1].replace(".git", "")
+    points_to_100 = 100 - score
+
+    md = f"# Fix Report: {repo_name}\n\n"
+    md += f"**Current Score**: {score}/100\n"
+    md += f"**Points to 100**: {points_to_100}\n"
+    md += f"**Files Scanned**: {files_scanned}\n"
+    if languages:
+        top_langs = sorted(languages.items(), key=lambda x: x[1], reverse=True)[:5]
+        md += f"**Languages**: {', '.join(f'{k} ({v})' for k, v in top_langs)}\n"
+    md += f"\n---\n\n"
+
+    # Score breakdown
+    md += "## Score Breakdown\n\n"
+    md += "| Category | Score | Max | Status |\n"
+    md += "|----------|-------|-----|--------|\n"
+    md += f"| Section Coverage | {section_score} | 60 | {len(present_headings)}/{len(expected_headings)} sections |\n"
+    md += f"| Content Depth | {depth_score} | 20 | {line_count} lines |\n"
+    md += f"| Code Blocks | {code_score} | 10 | {code_block_count} blocks |\n"
+    md += f"| Specificity | {spec_score} | 10 | {bold_bullets} bold bullets |\n"
+    md += f"| **Total** | **{score}** | **100** | |\n\n"
+
+    # Priority actions
+    if actions:
+        md += "## Priority Actions\n\n"
+        md += "Ordered by point impact (highest first):\n\n"
+        for i, action in enumerate(actions, 1):
+            badge = {"high": "HIGH", "medium": "MED", "low": "LOW"}[action["priority"]]
+            md += f"{i}. **[{badge}]** {action['action']} (+{action['points']} pts)\n"
+        md += "\n"
+
+    # Missing section templates
+    if missing_headings:
+        md += "## Missing Sections — Copy-Paste Templates\n\n"
+        md += "Add these sections to your CLAUDE.md to reach 100%. Fill in the bracketed placeholders.\n\n"
+        for heading in missing_headings:
+            template = section_templates.get(heading, f"## {heading}\n\n[Add content here]\n")
+            md += f"### Template: {heading}\n\n"
+            md += f"```markdown\n{template}```\n\n"
+
+    # Claude Code prompt
+    md += "## Quick Fix — Claude Code Prompt\n\n"
+    md += "Paste this into Claude Code to auto-generate the missing content:\n\n"
+    md += "```\n"
+    if missing_headings:
+        md += f"Read my CLAUDE.md and add the following missing sections: {', '.join(missing_headings)}. "
+    if line_count <= 150:
+        md += "Expand each section with specific details from the actual codebase. "
+    if code_block_count < 2:
+        md += "Include code blocks with real commands and examples. "
+    if bold_bullets <= 5:
+        md += "Use bold-label bullet points (- **Key**: value) for specificity. "
+    md += "Target 150+ lines total. Keep it accurate to the actual project.\n"
+    md += "```\n\n"
+
+    # Existing sections (what's already good)
+    if present_headings:
+        md += "## Existing Sections (No Action Needed)\n\n"
+        for h in present_headings:
+            md += f"- {h}\n"
+        md += "\n"
+
+    md += "---\n\n"
+    md += f"*Generated by [anchormd](https://anchormd.dev) on {datetime.now(UTC).strftime('%Y-%m-%d')}*\n"
+
+    return {
+        "scan_id": scan_id,
+        "repo_url": repo_url,
+        "score": score,
+        "points_to_100": points_to_100,
+        "actions": actions,
+        "missing_sections": missing_headings,
+        "present_sections": present_headings,
+        "breakdown": {
+            "sections": {"score": section_score, "max": 60, "present": len(present_headings), "total": len(expected_headings)},
+            "depth": {"score": depth_score, "max": 20, "lines": line_count},
+            "code_blocks": {"score": code_score, "max": 10, "count": code_block_count},
+            "specificity": {"score": spec_score, "max": 10, "bold_bullets": bold_bullets},
+        },
+        "markdown": md,
+    }
+
+
 @app.get("/api/health")
 async def health() -> dict[str, str]:
     """Health check."""
