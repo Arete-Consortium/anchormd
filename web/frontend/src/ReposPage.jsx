@@ -144,6 +144,8 @@ export default function ReposPage() {
           newStatuses[scan.repo_url] = scan.status === "pending" ? "scanning" : scan.status;
           if (scan.status === "complete" && scan.score != null) {
             newResults[scan.repo_url] = scan;
+          } else if (scan.status === "error") {
+            newResults[scan.repo_url] = scan;
           }
         }
         setScanStatuses((prev) => ({ ...prev, ...newStatuses }));
@@ -318,8 +320,46 @@ export default function ReposPage() {
         </div>
       )}
 
+      {/* Batch summary — shown after scan completes */}
+      {!batchRunning && Object.keys(scanStatuses).length > 0 && (() => {
+        const completed = Object.values(scanStatuses).filter((s) => s === "complete").length;
+        const errors = Object.values(scanStatuses).filter((s) => s === "error").length;
+        const errorReasons = {};
+        Object.entries(scanResults).forEach(([, r]) => {
+          if (r?.error) {
+            const reason = r.error.includes("timed out")
+              ? "Clone timeout"
+              : r.error.includes("not found")
+                ? "Repo not found"
+                : r.error.includes("too large")
+                  ? "Too large"
+                  : "Other";
+            errorReasons[reason] = (errorReasons[reason] || 0) + 1;
+          }
+        });
+        if (errors === 0) return null;
+        return (
+          <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-4 mb-6">
+            <div className="flex items-center gap-4 text-sm">
+              <span className="text-green-400">{completed} scored</span>
+              <span className="text-red-400">{errors} failed</span>
+              {Object.entries(errorReasons).length > 0 && (
+                <span className="text-gray-500">
+                  ({Object.entries(errorReasons).map(([k, v]) => `${k}: ${v}`).join(", ")})
+                </span>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {repos.map((repo) => {
+        {[...repos].sort((a, b) => {
+          const sa = scanStatuses[a.html_url] || "";
+          const sb = scanStatuses[b.html_url] || "";
+          const order = { error: 0, complete: 1, scanning: 2, "": 3 };
+          return (order[sa] ?? 3) - (order[sb] ?? 3);
+        }).map((repo) => {
           const status = scanStatuses[repo.html_url];
           const result = scanResults[repo.html_url];
           return (
@@ -368,7 +408,13 @@ export default function ReposPage() {
                     Scanning...
                   </div>
                 ) : status === "error" ? (
-                  <span className="text-red-400 text-xs">Error</span>
+                  <span className="text-red-400 text-xs" title={result?.error || ""}>
+                    {result?.error
+                      ? result.error.length > 40
+                        ? result.error.slice(0, 40) + "..."
+                        : result.error
+                      : "Error"}
+                  </span>
                 ) : (
                   <span />
                 )}
