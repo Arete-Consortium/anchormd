@@ -60,17 +60,23 @@ def validate_github_url(url: str) -> str:
     return f"https://github.com/{owner}/{repo}.git"
 
 
-def clone_repo(url: str, dest: Path) -> None:
+def clone_repo(url: str, dest: Path, token: str | None = None) -> None:
     """Shallow-clone a GitHub repo into dest.
 
+    When token is provided, uses it for authenticated cloning (private repos).
     Raises RuntimeError on failure.
     """
+    clone_url = url
+    if token:
+        parsed = urlparse(url)
+        clone_url = f"https://x-access-token:{token}@{parsed.hostname}{parsed.path}"
+
     cmd = [
         "git",
         "clone",
         "--depth=1",
         "--single-branch",
-        url,
+        clone_url,
         str(dest),
     ]
     try:
@@ -91,7 +97,7 @@ def clone_repo(url: str, dest: Path) -> None:
         ) from exc
 
 
-def generate_claude_md(repo_url: str) -> GenerateResult:
+def generate_claude_md(repo_url: str, token: str | None = None) -> GenerateResult:
     """Clone a GitHub repo and generate a CLAUDE.md for it.
 
     This is the main entry point for the web API.
@@ -113,7 +119,7 @@ def generate_claude_md(repo_url: str) -> GenerateResult:
 
     try:
         # Clone.
-        clone_repo(normalized_url, clone_path)
+        clone_repo(normalized_url, clone_path, token=token)
 
         # Configure and scan.
         config = ForgeConfig(root_path=clone_path, max_files=_MAX_SCAN_FILES)

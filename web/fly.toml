@@ -6,6 +6,10 @@ primary_region = 'sjc'
 
 [env]
   PYTHONUNBUFFERED = "1"
+  ADMIN_GITHUB_USERNAME = "AreteDriver"
+  # Set via `fly secrets set`:
+  #   GITHUB_CLIENT_ID
+  #   GITHUB_CLIENT_SECRET
 
 [http_service]
   internal_port = 8000
