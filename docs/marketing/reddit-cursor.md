@@ -13,11 +13,12 @@ I built **anchormd** to automate this. It scans your codebase and generates a co
 - Common commands (auto-detects your test/lint/build setup)
 - Anti-patterns specific to your stack
 - Key models, API endpoints, domain terms
+- Quality score (0-100) with a downloadable fix report showing exactly how to reach 100
 
-**Try it:** [anchormd.dev](https://anchormd.dev) — paste any public GitHub URL. Sign in with GitHub for private repos.
+**Try it:** [anchormd.dev](https://anchormd.dev) — paste any public GitHub URL. Sign in with GitHub for private repos and batch-scan your entire account.
 
 **CLI:** `pip install anchormd && anchormd generate .`
 
 The output works as a CLAUDE.md for Claude Code or can be adapted as .cursorrules. Planning native .cursorrules export soon.
 
-693 tests, MIT licensed. Feedback welcome.
+~700 tests, MIT licensed. Feedback welcome.

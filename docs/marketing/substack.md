@@ -28,18 +28,29 @@ What it detects from your code (not templates):
 - **Anti-patterns** — flags what NOT to do based on your stack
 - **Domain context** — extracts your key classes, API endpoints, enums
 
+## Score It, Fix It, Ship It
+
+Every scan gets a 0-100 quality score. If you're under 100, hit the **Fix Report** button — it downloads a markdown file with:
+
+- Exact score breakdown (which categories are costing you points)
+- Priority actions sorted by point impact
+- Copy-paste templates for every missing section
+- A single Claude Code prompt that fixes all the gaps at once
+
+Most repos I've scanned start at 0 (no file) and jump to 75-95 after generation. The fix report closes the last gap.
+
+## Batch Scan Your Entire Account
+
+Sign in with GitHub and scan every repo you own in one click. Repos that already scored 100 and haven't been pushed to since the last scan are cached — so re-scans only touch what changed.
+
 ## Try It
 
 1. Go to [anchormd.dev](https://anchormd.dev)
 2. Paste a GitHub URL
 3. Get a CLAUDE.md in 30 seconds
 
-Sign in with GitHub to scan private repos or batch-scan your entire account.
-
 CLI: `pip install anchormd && anchormd generate .`
-
-The tool scores your context file 0-100 with specific recommendations. Most repos I've scanned start at 0 (no file) and jump to 75-95 after generation.
 
 ---
 
-*anchormd is MIT licensed. Pro tier ($8/mo) adds interactive init, diff detection, and tech debt scanning. Deep scan reports ($29 one-time) coming soon.*
+*anchormd is MIT licensed. Pro tier ($8/mo) adds interactive init, diff detection, and tech debt scanning. Deep scan reports ($29 one-time) for full architecture audits with recommendations.*
