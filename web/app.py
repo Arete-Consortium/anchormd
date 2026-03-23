@@ -292,7 +292,7 @@ async def _fetch_all_repos(token: str) -> list[dict[str, Any]]:
                     "page": page,
                     "sort": "updated",
                     "direction": "desc",
-                    "affiliation": "owner",
+                    "affiliation": "owner,organization_member",
                 },
             )
             if resp.status_code != 200:
