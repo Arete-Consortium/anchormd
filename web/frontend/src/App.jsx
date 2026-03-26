@@ -90,35 +90,45 @@ function DeepScanCTA({ repoUrl, onCheckout }) {
   };
 
   return (
-    <div className="bg-gradient-to-r from-anchor-900/50 to-anchor-800/30 border border-anchor-700/50 rounded-lg p-6 mt-6">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div className="flex-1">
-          <h3 className="text-white font-semibold text-lg mb-1">
-            Want deeper analysis?
-          </h3>
-          <p className="text-gray-400 text-sm">
-            Get a full audit report with architecture recommendations, security
-            review, and actionable improvements for{" "}
-            <span className="text-white font-medium">$29</span> (one-time).
+    <div className="bg-gradient-to-r from-anchor-900/80 to-anchor-800/60 border-2 border-anchor-500/60 rounded-lg p-6 mt-4">
+      <div className="flex flex-col gap-4">
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-anchor-400 text-xl">&#128270;</span>
+            <h3 className="text-white font-bold text-xl">
+              Unlock the Deep Report
+            </h3>
+            <span className="bg-anchor-600/30 text-anchor-300 text-xs font-semibold px-2 py-0.5 rounded-full border border-anchor-500/40">
+              $19 one-time
+            </span>
+          </div>
+          <p className="text-gray-300 text-sm leading-relaxed">
+            Your free scan found the basics. The deep report adds{" "}
+            <span className="text-white font-medium">architecture recommendations</span>,{" "}
+            <span className="text-white font-medium">security review</span>,{" "}
+            <span className="text-white font-medium">dependency analysis</span>, and{" "}
+            <span className="text-white font-medium">actionable fix priorities</span>{" "}
+            — delivered to your inbox.
           </p>
         </div>
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
           <input
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@email.com"
-            className="bg-gray-900 border border-gray-700 rounded-md px-3 py-2 text-white text-sm
-                       placeholder-gray-500 focus:outline-none focus:border-anchor-500 w-full sm:w-52"
+            className="bg-gray-900 border border-gray-600 rounded-md px-4 py-2.5 text-white text-sm
+                       placeholder-gray-500 focus:outline-none focus:border-anchor-400 focus:ring-1
+                       focus:ring-anchor-400/50 w-full sm:w-64"
           />
           <button
             onClick={handleCheckout}
             disabled={submitting || !email.trim()}
-            className="bg-anchor-600 hover:bg-anchor-700 disabled:bg-gray-700 disabled:text-gray-500
-                       text-white font-semibold px-5 py-2 rounded-md transition-colors text-sm
-                       whitespace-nowrap"
+            className="bg-anchor-500 hover:bg-anchor-600 disabled:bg-gray-700 disabled:text-gray-500
+                       text-white font-bold px-6 py-2.5 rounded-md transition-colors text-sm
+                       whitespace-nowrap shadow-lg shadow-anchor-500/20"
           >
-            {submitting ? "Redirecting..." : "Get Deep Report"}
+            {submitting ? "Redirecting to checkout..." : "Get Deep Report"}
           </button>
         </div>
       </div>
@@ -126,6 +136,41 @@ function DeepScanCTA({ repoUrl, onCheckout }) {
         <p className="text-red-400 text-sm mt-2">{ctaError}</p>
       )}
     </div>
+  );
+}
+
+function GradeBadge({ grade, size = "md" }) {
+  const colors = {
+    A: "bg-green-600 text-white",
+    B: "bg-blue-600 text-white",
+    C: "bg-yellow-600 text-black",
+    D: "bg-orange-600 text-white",
+    F: "bg-red-600 text-white",
+  };
+  const sizes = {
+    sm: "text-xs px-2 py-0.5",
+    md: "text-sm px-3 py-1",
+    lg: "text-2xl px-4 py-2 font-bold",
+  };
+  return (
+    <span className={`${colors[grade] || "bg-gray-600 text-white"} ${sizes[size]} rounded-md font-bold`}>
+      {grade}
+    </span>
+  );
+}
+
+function SeverityBadge({ severity }) {
+  const colors = {
+    critical: "bg-red-600 text-white",
+    high: "bg-orange-600 text-white",
+    medium: "bg-yellow-600 text-black",
+    low: "bg-blue-600 text-white",
+    unknown: "bg-gray-600 text-white",
+  };
+  return (
+    <span className={`${colors[severity] || colors.unknown} text-xs px-2 py-0.5 rounded font-semibold uppercase`}>
+      {severity}
+    </span>
   );
 }
 
@@ -158,7 +203,7 @@ function DeepScanReportView({ report }) {
         <p className="text-center text-gray-400 text-sm mt-4">
           {report.status === "awaiting_payment"
             ? "Waiting for payment confirmation..."
-            : "Deep scan in progress..."}
+            : "Running deep analysis (LLM review, dependency audit, scoring)..."}
         </p>
       </div>
     );
@@ -172,6 +217,10 @@ function DeepScanReportView({ report }) {
     );
   }
 
+  const scores = report.category_scores;
+  const llm = report.llm_analysis;
+  const deps = report.dependency_audit;
+
   return (
     <div className="pb-12 pt-6">
       <div className="flex items-center gap-3 mb-6">
@@ -184,11 +233,97 @@ function DeepScanReportView({ report }) {
         </span>
       </div>
 
+      {/* Category Scorecard */}
+      {scores && (
+        <div className="mb-8">
+          <div className="flex items-center gap-3 mb-4">
+            <h2 className="text-white text-xl font-semibold">Health Scorecard</h2>
+            <GradeBadge grade={scores.grade} size="md" />
+            <span className="text-gray-400 text-sm">{scores.overall}/100 overall</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+            {Object.entries(scores.categories || {}).map(([key, cat]) => (
+              <div key={key} className="bg-gray-900 border border-gray-700 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-gray-300 text-sm font-medium">{cat.label}</span>
+                  <GradeBadge grade={cat.grade} size="sm" />
+                </div>
+                <div className="text-2xl font-bold text-white mb-1">{cat.score}</div>
+                <p className="text-gray-500 text-xs">{cat.details}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Dependency Audit */}
+      {deps && !deps.error && (
+        <div className="mb-8">
+          <h2 className="text-white text-xl font-semibold mb-4">Dependency Audit</h2>
+          {deps.vulnerabilities && deps.vulnerabilities.length > 0 ? (
+            <>
+              <div className="bg-red-950/30 border border-red-800/50 rounded-lg p-3 mb-3">
+                <p className="text-red-400 text-sm font-medium">
+                  {deps.vulnerabilities.length} vulnerabilit{deps.vulnerabilities.length === 1 ? "y" : "ies"} found in {deps.total_packages} packages
+                </p>
+              </div>
+              <div className="space-y-2">
+                {deps.vulnerabilities.map((v, i) => (
+                  <div key={i} className="bg-gray-900 border border-gray-700 rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-1">
+                      <SeverityBadge severity={v.severity} />
+                      <span className="text-white font-medium">{v.package}</span>
+                      <span className="text-gray-500 text-sm">{v.version}</span>
+                      <span className="text-gray-500 text-xs">{v.cve_id}</span>
+                    </div>
+                    <p className="text-gray-400 text-sm">{v.summary}</p>
+                    {v.fix_version && (
+                      <p className="text-green-400 text-xs mt-1">Fix available: upgrade to {v.fix_version}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="bg-green-950/30 border border-green-800/50 rounded-lg p-4">
+              <p className="text-green-400 text-sm font-medium">
+                No known vulnerabilities found across {deps.total_packages} packages
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* LLM Analysis */}
+      {llm && !llm.error && (
+        <div className="mb-8">
+          <h2 className="text-white text-xl font-semibold mb-4">AI Analysis</h2>
+
+          {llm.architecture && (
+            <div className="bg-gray-900 border border-gray-700 rounded-lg p-5 mb-3">
+              <h3 className="text-anchor-400 font-semibold text-sm uppercase tracking-wide mb-2">Architecture Review</h3>
+              <div className="text-gray-300 text-sm leading-relaxed markdown-output">
+                <ReactMarkdown>{llm.architecture}</ReactMarkdown>
+              </div>
+            </div>
+          )}
+
+          {llm.security && (
+            <div className="bg-gray-900 border border-gray-700 rounded-lg p-5 mb-3">
+              <h3 className="text-anchor-400 font-semibold text-sm uppercase tracking-wide mb-2">Security Review</h3>
+              <div className="text-gray-300 text-sm leading-relaxed markdown-output">
+                <ReactMarkdown>{llm.security}</ReactMarkdown>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Recommendations */}
       {report.recommendations && report.recommendations.length > 0 && (
         <div className="mb-8">
           <h2 className="text-white text-xl font-semibold mb-4">
-            Recommendations
+            Priority Actions
           </h2>
           <div className="space-y-3">
             {report.recommendations.map((rec, i) => (
@@ -481,6 +616,9 @@ export default function App() {
                 setPage("home");
                 setResult(null);
                 setError(null);
+                setDeepReport(null);
+                setDeepLoading(false);
+                window.history.replaceState({}, "", window.location.pathname);
               }}
               className="flex items-center gap-3"
             >
@@ -757,6 +895,14 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Deep Scan CTA — shown above results for visibility */}
+                {result.scan_type !== "deep" && (
+                  <DeepScanCTA
+                    repoUrl={result.repo_url}
+                    onCheckout={createDeepScanCheckout}
+                  />
+                )}
+
                 <div className="bg-gray-900 border border-gray-700 rounded-lg overflow-hidden">
                   {showRaw ? (
                     <pre className="p-6 text-sm text-gray-300 font-mono whitespace-pre-wrap overflow-x-auto">
@@ -768,14 +914,6 @@ export default function App() {
                     </div>
                   )}
                 </div>
-
-                {/* Deep Scan CTA — shown after free scan completes */}
-                {result.scan_type !== "deep" && (
-                  <DeepScanCTA
-                    repoUrl={result.repo_url}
-                    onCheckout={createDeepScanCheckout}
-                  />
-                )}
               </div>
             )}
 

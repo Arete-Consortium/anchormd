@@ -35,9 +35,10 @@ ADMIN_GITHUB_USERNAME = os.environ.get("ADMIN_GITHUB_USERNAME", "AreteDriver")
 # Stripe configuration.
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
-DEEP_SCAN_PRICE_CENTS = 2900  # $29.00 one-time
+DEEP_SCAN_PRICE_CENTS = 1900  # $19.00 one-time
 SITE_URL = os.environ.get("SITE_URL", "https://anchormd.dev")
 LICENSE_SERVER_URL = os.environ.get("ANCHORMD_LICENSE_SERVER", "")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 if STRIPE_SECRET_KEY:
     stripe.api_key = STRIPE_SECRET_KEY
@@ -211,6 +212,9 @@ class DeepScanReport(BaseModel):
     files_scanned: int = 0
     languages: dict[str, int] = Field(default_factory=dict)
     recommendations: list[dict[str, Any]] = Field(default_factory=list)
+    llm_analysis: dict[str, Any] | None = None
+    dependency_audit: dict[str, Any] | None = None
+    category_scores: dict[str, Any] | None = None
     scan_type: str = "deep"
     status: str = "pending"
     created_at: str | None = None
@@ -814,116 +818,503 @@ async def get_batch_status(batch_id: str) -> BatchStatusResponse:
 # --- Deep Scan Logic ---
 
 
-def _generate_recommendations(content: str, score: int) -> list[dict[str, Any]]:
-    """Generate architecture recommendations based on scan results."""
-    recommendations: list[dict[str, Any]] = []
+def _build_file_tree(repo_path: Path, max_depth: int = 3, max_entries: int = 100) -> str:
+    """Build a compact file tree string for LLM context."""
+    lines: list[str] = []
+    count = 0
 
-    checks = [
-        (
-            "## Anti-Patterns" not in content,
-            "high",
-            "Add Anti-Patterns Section",
-            "Define explicit anti-patterns to prevent common mistakes. "
-            "Include rules like no bare except, no mutable defaults, no print debugging.",
-        ),
-        (
-            "## Testing" not in content and "test" not in content.lower(),
-            "high",
-            "Add Testing Standards",
-            "Document test frameworks, coverage targets, and testing conventions. "
-            "AI agents write better tests when standards are explicit.",
-        ),
-        (
-            "## Environment" not in content and "env" not in content.lower(),
-            "medium",
-            "Document Environment Variables",
-            "List required environment variables with descriptions. "
-            "Prevents accidental credential exposure and misconfiguration.",
-        ),
-        (
-            "## Architecture" not in content,
-            "medium",
-            "Add Architecture Overview",
-            "Include a directory tree and component descriptions. "
-            "Helps AI agents understand project structure without exploring.",
-        ),
-        (
-            "## Dependencies" not in content,
-            "low",
-            "Document Dependencies",
-            "List key dependencies and their purposes. "
-            "Prevents AI agents from introducing conflicting packages.",
-        ),
-        (
-            "## CI/CD" not in content and "workflow" not in content.lower(),
-            "medium",
-            "Add CI/CD Documentation",
-            "Document build, test, and deploy workflows. "
-            "AI agents can then update CI configs correctly.",
-        ),
-        (
-            "## Security" not in content,
-            "high",
-            "Add Security Guidelines",
-            "Document credential handling, input validation, and security policies. "
-            "Critical for preventing AI-generated security vulnerabilities.",
-        ),
-        (
-            score < 60,
-            "high",
-            "Improve Overall Coverage",
-            f"Current score is {score}/100. Focus on adding missing sections "
-            "to give AI agents comprehensive context about your codebase.",
-        ),
+    def _walk(path: Path, prefix: str, depth: int) -> None:
+        nonlocal count
+        if depth > max_depth or count >= max_entries:
+            return
+        try:
+            entries = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name))
+        except PermissionError:
+            return
+        for entry in entries:
+            if entry.name.startswith(".") or entry.name == "node_modules":
+                continue
+            if count >= max_entries:
+                lines.append(f"{prefix}...")
+                return
+            if entry.is_dir():
+                lines.append(f"{prefix}{entry.name}/")
+                count += 1
+                _walk(entry, prefix + "  ", depth + 1)
+            else:
+                lines.append(f"{prefix}{entry.name}")
+                count += 1
+
+    _walk(repo_path, "", 0)
+    return "\n".join(lines)
+
+
+def _parse_dependencies(repo_path: Path) -> list[dict[str, str]]:
+    """Parse dependency files and extract package names with versions."""
+    deps: list[dict[str, str]] = []
+
+    # requirements.txt
+    req_file = repo_path / "requirements.txt"
+    if req_file.exists():
+        for line in req_file.read_text(errors="replace").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith("-"):
+                continue
+            for sep in ("==", ">=", "<=", "~=", "!=", ">", "<"):
+                if sep in line:
+                    name, version = line.split(sep, 1)
+                    deps.append({"name": name.strip(), "version": version.strip().split(",")[0],
+                                 "ecosystem": "PyPI"})
+                    break
+            else:
+                if line and not line.startswith("git+"):
+                    deps.append({"name": line, "version": "", "ecosystem": "PyPI"})
+
+    # pyproject.toml dependencies
+    pyproject = repo_path / "pyproject.toml"
+    if pyproject.exists():
+        try:
+            import re as _re
+
+            content = pyproject.read_text(errors="replace")
+            # Simple extraction of dependencies array entries
+            in_deps = False
+            for line in content.splitlines():
+                if _re.match(r"^dependencies\s*=\s*\[", line):
+                    in_deps = True
+                    continue
+                if in_deps:
+                    if "]" in line:
+                        in_deps = False
+                        continue
+                    match = _re.search(r'"([^"]+)"', line)
+                    if match:
+                        dep_str = match.group(1)
+                        for sep in ("==", ">=", "<=", "~=", "!="):
+                            if sep in dep_str:
+                                name, ver = dep_str.split(sep, 1)
+                                deps.append({"name": name.strip(), "version": ver.strip().split(",")[0],
+                                             "ecosystem": "PyPI"})
+                                break
+                        else:
+                            deps.append({"name": dep_str.split(">")[0].split("<")[0].strip(),
+                                         "version": "", "ecosystem": "PyPI"})
+        except Exception:
+            pass
+
+    # package.json
+    pkg_json = repo_path / "package.json"
+    if pkg_json.exists():
+        try:
+            pkg = json_module.loads(pkg_json.read_text(errors="replace"))
+            for section in ("dependencies", "devDependencies"):
+                for name, ver in pkg.get(section, {}).items():
+                    clean_ver = ver.lstrip("^~>=<")
+                    deps.append({"name": name, "version": clean_ver, "ecosystem": "npm"})
+        except Exception:
+            pass
+
+    # Cargo.toml
+    cargo = repo_path / "Cargo.toml"
+    if cargo.exists():
+        try:
+            import re as _re
+
+            content = cargo.read_text(errors="replace")
+            in_deps = False
+            for line in content.splitlines():
+                if _re.match(r"^\[dependencies\]", line):
+                    in_deps = True
+                    continue
+                if in_deps and line.startswith("["):
+                    break
+                if in_deps and "=" in line:
+                    parts = line.split("=", 1)
+                    name = parts[0].strip()
+                    ver_str = parts[1].strip().strip('"').strip("'")
+                    if ver_str.startswith("{"):
+                        match = _re.search(r'version\s*=\s*"([^"]+)"', ver_str)
+                        ver_str = match.group(1) if match else ""
+                    deps.append({"name": name, "version": ver_str, "ecosystem": "crates.io"})
+        except Exception:
+            pass
+
+    # Deduplicate by (name, ecosystem)
+    seen: set[tuple[str, str]] = set()
+    unique: list[dict[str, str]] = []
+    for d in deps:
+        key = (d["name"].lower(), d["ecosystem"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(d)
+    return unique
+
+
+def _check_vulnerabilities(deps: list[dict[str, str]]) -> dict[str, Any]:
+    """Check dependencies against OSV.dev for known vulnerabilities."""
+    if not deps:
+        return {"total_packages": 0, "vulnerabilities": [], "ecosystem": "unknown"}
+
+    # Only query deps with pinned versions
+    queryable = [d for d in deps if d.get("version")]
+    if not queryable:
+        return {
+            "total_packages": len(deps),
+            "vulnerabilities": [],
+            "ecosystem": deps[0]["ecosystem"] if deps else "unknown",
+        }
+
+    queries = [
+        {"package": {"name": d["name"], "ecosystem": d["ecosystem"]}, "version": d["version"]}
+        for d in queryable
     ]
 
-    for condition, priority, title, description in checks:
-        if condition:
-            recommendations.append(
-                {"priority": priority, "title": title, "description": description}
-            )
+    try:
+        with httpx.Client(timeout=30) as client:
+            resp = client.post("https://api.osv.dev/v1/querybatch", json={"queries": queries})
+            resp.raise_for_status()
+            results = resp.json().get("results", [])
+    except Exception as exc:
+        logger.warning("OSV.dev query failed: %s", exc)
+        return {"total_packages": len(deps), "vulnerabilities": [], "error": str(exc)}
 
-    return recommendations
+    vulns: list[dict[str, Any]] = []
+    for i, result in enumerate(results):
+        for vuln in result.get("vulns", []):
+            severity = "unknown"
+            for s in vuln.get("severity", []):
+                if s.get("type") == "CVSS_V3":
+                    score_str = s.get("score", "")
+                    try:
+                        cvss = float(score_str) if score_str else 0
+                    except (ValueError, TypeError):
+                        cvss = 0
+                    if cvss >= 9.0:
+                        severity = "critical"
+                    elif cvss >= 7.0:
+                        severity = "high"
+                    elif cvss >= 4.0:
+                        severity = "medium"
+                    else:
+                        severity = "low"
+
+            fix_version = None
+            for affected in vuln.get("affected", []):
+                for r in affected.get("ranges", []):
+                    for ev in r.get("events", []):
+                        if "fixed" in ev:
+                            fix_version = ev["fixed"]
+
+            vulns.append({
+                "package": queryable[i]["name"],
+                "version": queryable[i]["version"],
+                "cve_id": vuln.get("aliases", [vuln.get("id", "")])[0] if vuln.get("aliases") else vuln.get("id", ""),
+                "severity": severity,
+                "summary": vuln.get("summary", "No description available")[:200],
+                "fix_version": fix_version,
+            })
+
+    return {
+        "total_packages": len(deps),
+        "vulnerabilities": vulns,
+        "ecosystem": deps[0]["ecosystem"] if deps else "unknown",
+    }
+
+
+def _run_llm_analysis(
+    claude_md: str, file_tree: str, dep_audit: dict[str, Any]
+) -> dict[str, Any]:
+    """Send CLAUDE.md + context to Claude for architecture/security analysis."""
+    if not ANTHROPIC_API_KEY:
+        return {"error": "AI analysis not configured"}
+
+    vuln_summary = ""
+    for v in dep_audit.get("vulnerabilities", []):
+        vuln_summary += f"- {v['package']} {v['version']}: {v['cve_id']} ({v['severity']})\n"
+
+    prompt = f"""Analyze this CLAUDE.md file and repository structure. Provide a concise, actionable report.
+
+## File Tree
+```
+{file_tree[:3000]}
+```
+
+## Generated CLAUDE.md
+```markdown
+{claude_md[:6000]}
+```
+
+{f"## Known Vulnerabilities{chr(10)}{vuln_summary}" if vuln_summary else "No known vulnerabilities found."}
+
+Respond in this exact JSON format:
+{{
+  "architecture": "2-3 paragraph assessment of the project architecture, organization, and patterns. Be specific about what's good and what could improve.",
+  "security": "2-3 paragraph security review. Cover credential handling, input validation, dependency risks, and any concerns from the code structure.",
+  "improvements": [
+    {{"priority": "high|medium|low", "title": "Short title", "description": "Specific, actionable recommendation"}},
+    ... (provide 5-8 items, most impactful first)
+  ]
+}}
+
+Be direct and specific. Reference actual files/patterns from the tree. No generic advice."""
+
+    try:
+        with httpx.Client(timeout=60) as client:
+            resp = client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-sonnet-4-20250514",
+                    "max_tokens": 4096,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            text = data["content"][0]["text"]
+
+            # Extract JSON from response (may be wrapped in markdown code block)
+            import re as _re
+
+            json_match = _re.search(r"\{[\s\S]*\}", text)
+            if json_match:
+                return json_module.loads(json_match.group())
+            return {"error": "Could not parse LLM response"}
+    except Exception as exc:
+        logger.warning("LLM analysis failed: %s", exc)
+        return {"error": f"AI analysis unavailable: {type(exc).__name__}"}
+
+
+def _compute_category_scores(
+    content: str, vulnerabilities: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Compute category scores with letter grades for the deep scan report."""
+
+    def _grade(score: int) -> str:
+        if score >= 90:
+            return "A"
+        if score >= 80:
+            return "B"
+        if score >= 70:
+            return "C"
+        if score >= 60:
+            return "D"
+        return "F"
+
+    content_lower = content.lower()
+
+    # Structure (25%)
+    structure_score = 40  # base
+    if "## Architecture" in content or "## Project" in content:
+        structure_score += 20
+    if "```" in content and ("├" in content or "└" in content or "directory" in content_lower):
+        structure_score += 15
+    if "## Coding Standards" in content or "## Code Style" in content:
+        structure_score += 15
+    if "## Anti-Patterns" in content:
+        structure_score += 10
+    structure_score = min(structure_score, 100)
+
+    # Security (25%)
+    security_score = 50  # base
+    if "## Security" in content or "security" in content_lower:
+        security_score += 15
+    if "credential" in content_lower or "secret" in content_lower or "api key" in content_lower:
+        security_score += 10
+    if "validation" in content_lower or "sanitiz" in content_lower:
+        security_score += 10
+    if "## Environment" in content or "env" in content_lower:
+        security_score += 10
+    # Penalty for vulnerabilities
+    crit_count = sum(1 for v in vulnerabilities if v.get("severity") in ("critical", "high"))
+    med_count = sum(1 for v in vulnerabilities if v.get("severity") == "medium")
+    security_score -= crit_count * 15 + med_count * 5
+    security_score = max(0, min(security_score, 100))
+
+    # CI/CD (15%)
+    ci_score = 30  # base
+    if "## CI" in content or "ci/cd" in content_lower or "workflow" in content_lower:
+        ci_score += 25
+    if "github actions" in content_lower or ".github/workflows" in content_lower:
+        ci_score += 20
+    if "deploy" in content_lower:
+        ci_score += 15
+    if "lint" in content_lower or "format" in content_lower:
+        ci_score += 10
+    ci_score = min(ci_score, 100)
+
+    # Dependencies (20%)
+    deps_score = 50  # base
+    if "## Dependencies" in content or "## Tech Stack" in content:
+        deps_score += 20
+    if "requirements" in content_lower or "package.json" in content_lower or "pyproject" in content_lower:
+        deps_score += 15
+    # Penalty for vulnerabilities
+    deps_score -= crit_count * 20 + med_count * 8
+    if not vulnerabilities:
+        deps_score += 15  # bonus for clean deps
+    deps_score = max(0, min(deps_score, 100))
+
+    # Testing (15%)
+    test_score = 30  # base
+    if "## Testing" in content or "test" in content_lower:
+        test_score += 20
+    if "pytest" in content_lower or "jest" in content_lower or "vitest" in content_lower:
+        test_score += 15
+    if "coverage" in content_lower:
+        test_score += 15
+    if "mock" in content_lower or "fixture" in content_lower:
+        test_score += 10
+    if "e2e" in content_lower or "integration" in content_lower:
+        test_score += 10
+    test_score = min(test_score, 100)
+
+    overall = round(
+        structure_score * 0.25
+        + security_score * 0.25
+        + ci_score * 0.15
+        + deps_score * 0.20
+        + test_score * 0.15
+    )
+
+    categories = {
+        "structure": {
+            "score": structure_score,
+            "grade": _grade(structure_score),
+            "label": "Project Structure",
+            "details": "Architecture documentation, directory organization, coding standards",
+        },
+        "security": {
+            "score": security_score,
+            "grade": _grade(security_score),
+            "label": "Security",
+            "details": "Credential handling, input validation, vulnerability exposure",
+        },
+        "ci": {
+            "score": ci_score,
+            "grade": _grade(ci_score),
+            "label": "CI/CD",
+            "details": "Build pipelines, deployment workflows, linting automation",
+        },
+        "deps": {
+            "score": deps_score,
+            "grade": _grade(deps_score),
+            "label": "Dependencies",
+            "details": "Package documentation, known vulnerabilities, version management",
+        },
+        "testing": {
+            "score": test_score,
+            "grade": _grade(test_score),
+            "label": "Testing",
+            "details": "Test frameworks, coverage targets, test conventions",
+        },
+    }
+
+    return {"overall": overall, "grade": _grade(overall), "categories": categories}
 
 
 def _run_deep_scan(scan_id: str, repo_url: str) -> None:
-    """Execute a deep scan (same generation + recommendations)."""
-    result = generate_claude_md(repo_url)
+    """Execute a deep scan with LLM analysis, dependency audit, and scoring."""
+    import shutil
+    import tempfile
+
+    from anchormd.analyzers import run_all
+    from anchormd.generators.composer import DocumentComposer
+    from anchormd.models import ForgeConfig
+    from anchormd.scanner import CodebaseScanner
+    from web.generator import clone_repo, validate_github_url
+
+    try:
+        normalized_url = validate_github_url(repo_url)
+    except ValueError as exc:
+        _deep_scan_error(scan_id, str(exc))
+        return
+
+    tmp_dir = tempfile.mkdtemp(prefix="anchormd-deep-")
+    clone_path = Path(tmp_dir) / "repo"
+
+    try:
+        # Clone and generate CLAUDE.md
+        clone_repo(normalized_url, clone_path)
+        config = ForgeConfig(root_path=clone_path, max_files=5000)
+        scanner = CodebaseScanner(config)
+        structure = scanner.scan()
+        analyses = run_all(structure, config)
+        composer = DocumentComposer(config)
+        content = composer.compose(structure, analyses)
+        score = composer.estimate_quality_score(content)
+
+        # While clone is on disk: parse deps and build file tree
+        file_tree = _build_file_tree(clone_path)
+        deps = _parse_dependencies(clone_path)
+    except Exception as exc:
+        logger.exception("Deep scan generation failed for %s", scan_id)
+        _deep_scan_error(scan_id, f"Scan failed: {type(exc).__name__}: {exc}")
+        return
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Run dependency audit (independent, can fail gracefully)
+    dep_audit = _check_vulnerabilities(deps)
+
+    # Run LLM analysis (independent, can fail gracefully)
+    llm_result = _run_llm_analysis(content, file_tree, dep_audit)
+
+    # Compute category scores
+    category_scores = _compute_category_scores(content, dep_audit.get("vulnerabilities", []))
+
+    # Build enriched recommendations from LLM improvements
+    recommendations = llm_result.get("improvements", []) if "error" not in llm_result else []
+
+    # Assemble full report data
+    report_data = {
+        "llm_analysis": llm_result,
+        "dependency_audit": dep_audit,
+        "category_scores": category_scores,
+        "recommendations": recommendations,
+    }
 
     conn = _get_db()
     try:
         now = datetime.now(UTC).isoformat()
-        if result.error:
-            conn.execute(
-                """
-                UPDATE scans SET status = 'error', error = ?, completed_at = ?
-                WHERE scan_id = ?
-                """,
-                (result.error, now, scan_id),
-            )
-        else:
-            recs = _generate_recommendations(result.content, result.score)
-            conn.execute(
-                """
-                UPDATE scans
-                SET status = 'complete', content = ?, score = ?,
-                    files_scanned = ?, languages = ?, completed_at = ?,
-                    recommendations = ?
-                WHERE scan_id = ?
-                """,
-                (
-                    result.content,
-                    result.score,
-                    result.files_scanned,
-                    json_module.dumps(result.languages),
-                    now,
-                    json_module.dumps(recs),
-                    scan_id,
-                ),
-            )
+        conn.execute(
+            """
+            UPDATE scans
+            SET status = 'complete', content = ?, score = ?,
+                files_scanned = ?, languages = ?, completed_at = ?,
+                recommendations = ?
+            WHERE scan_id = ?
+            """,
+            (
+                content,
+                category_scores["overall"],
+                structure.total_files,
+                json_module.dumps(structure.languages),
+                now,
+                json_module.dumps(report_data),
+                scan_id,
+            ),
+        )
         conn.commit()
     except Exception:
         logger.exception("Failed to update deep scan %s", scan_id)
+    finally:
+        conn.close()
+
+
+def _deep_scan_error(scan_id: str, error_msg: str) -> None:
+    """Mark a deep scan as failed."""
+    conn = _get_db()
+    try:
+        conn.execute(
+            "UPDATE scans SET status = 'error', error = ?, completed_at = ? WHERE scan_id = ?",
+            (error_msg, datetime.now(UTC).isoformat(), scan_id),
+        )
+        conn.commit()
     finally:
         conn.close()
 
@@ -933,7 +1324,7 @@ def _run_deep_scan(scan_id: str, repo_url: str) -> None:
 
 @app.post("/api/checkout/deep-scan", response_model=CheckoutResponse)
 async def create_deep_scan_checkout(request: CheckoutRequest) -> CheckoutResponse:
-    """Create a Stripe Checkout session for a $29 deep scan."""
+    """Create a Stripe Checkout session for a $19 deep scan."""
     if not STRIPE_SECRET_KEY:
         raise HTTPException(status_code=500, detail="Stripe not configured")
 
@@ -964,8 +1355,8 @@ async def create_deep_scan_checkout(request: CheckoutRequest) -> CheckoutRespons
                         "product_data": {
                             "name": "anchormd Deep Scan",
                             "description": (
-                                "Full audit report with architecture recommendations "
-                                "for your repository."
+                                "AI-powered architecture review, dependency audit, "
+                                "security analysis, and category scoring."
                             ),
                         },
                         "unit_amount": DEEP_SCAN_PRICE_CENTS,
@@ -1020,9 +1411,14 @@ async def stripe_webhook(request: Request, background_tasks: BackgroundTasks) ->
     except stripe.SignatureVerificationError as exc:
         raise HTTPException(status_code=400, detail="Invalid signature") from exc
 
-    if event["type"] == "checkout.session.completed":
-        session = event["data"]["object"]
-        metadata = session.get("metadata", {})
+    # Parse raw payload as plain dict to avoid Stripe object access quirks
+    import json as _wh_json
+
+    event_dict = _wh_json.loads(payload)
+
+    if event_dict["type"] == "checkout.session.completed":
+        session = event_dict["data"]["object"]
+        metadata = session.get("metadata") or {}
 
         if metadata.get("product") == "deep_scan":
             scan_id = metadata.get("scan_id")
@@ -1080,9 +1476,21 @@ async def get_deep_scan_report(scan_id: str) -> DeepScanReport:
 
     recs_raw = row_dict.get("recommendations", "[]")
     try:
-        recommendations = json_module.loads(recs_raw) if recs_raw else []
+        report_data = json_module.loads(recs_raw) if recs_raw else {}
     except (json_module.JSONDecodeError, TypeError):
-        recommendations = []
+        report_data = {}
+
+    # Support both old format (list) and new format (dict with nested sections)
+    if isinstance(report_data, list):
+        recommendations = report_data
+        llm_analysis = None
+        dependency_audit = None
+        category_scores = None
+    else:
+        recommendations = report_data.get("recommendations", [])
+        llm_analysis = report_data.get("llm_analysis")
+        dependency_audit = report_data.get("dependency_audit")
+        category_scores = report_data.get("category_scores")
 
     return DeepScanReport(
         scan_id=row_dict["scan_id"],
@@ -1092,6 +1500,9 @@ async def get_deep_scan_report(scan_id: str) -> DeepScanReport:
         files_scanned=row_dict.get("files_scanned", 0),
         languages=languages,
         recommendations=recommendations,
+        llm_analysis=llm_analysis,
+        dependency_audit=dependency_audit,
+        category_scores=category_scores,
         scan_type="deep",
         status=row_dict["status"],
         created_at=row_dict.get("created_at"),
