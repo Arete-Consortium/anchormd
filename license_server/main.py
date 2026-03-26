@@ -17,6 +17,7 @@ from license_server.rate_limit import limiter
 from license_server.routes.activate import router as activate_router
 from license_server.routes.revoke import router as revoke_router
 from license_server.routes.validate import router as validate_router
+from license_server.routes.usage import router as usage_router
 from license_server.routes.webhook import router as webhook_router
 
 _db_path_override = None
@@ -43,6 +44,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.include_router(activate_router)
 app.include_router(revoke_router)
 app.include_router(validate_router)
+app.include_router(usage_router)
 app.include_router(webhook_router)
 
 

@@ -89,6 +89,34 @@ class RevokeResponse(BaseModel):
     revoked_at: str
 
 
+class UsageRecordRequest(BaseModel):
+    """Request body for POST /v1/usage — record a scan."""
+
+    license_key: str
+    product: str = "anchormd"
+    scan_type: str = "deep_scan"  # 'audit' or 'deep_scan'
+    repo_fingerprint: str | None = None  # hash of repo URL/path
+
+
+class UsageCheckRequest(BaseModel):
+    """Request body for POST /v1/usage/check — check remaining quota."""
+
+    license_key: str
+    product: str = "anchormd"
+    scan_type: str = "deep_scan"
+
+
+class UsageResponse(BaseModel):
+    """Response for usage endpoints."""
+
+    scan_type: str
+    used: int = 0
+    limit: int = 0
+    remaining: int = 0
+    period: str = ""  # 'YYYY-MM'
+    allowed: bool = True
+
+
 class ErrorResponse(BaseModel):
     """Standard error envelope."""
 

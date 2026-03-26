@@ -88,6 +88,8 @@ anchormd/
 | `POST /v1/activate` | Admin Bearer | 10/min | Create license key |
 | `POST /v1/validate` | None | 60/min | Validate license key |
 | `POST /v1/revoke` | Admin Bearer | 10/min | Revoke license key |
+| `POST /v1/usage/check` | None | 60/min | Check scan quota remaining |
+| `POST /v1/usage` | None | 30/min | Record a scan + return updated quota |
 | `POST /v1/webhooks/stripe` | Stripe signature | 30/min | Automated fulfillment |
 
 ## License Key System
