@@ -215,6 +215,10 @@ class DeepScanReport(BaseModel):
     llm_analysis: dict[str, Any] | None = None
     dependency_audit: dict[str, Any] | None = None
     category_scores: dict[str, Any] | None = None
+    tech_debt: dict[str, Any] | None = None
+    compliance: dict[str, Any] | None = None
+    hygiene: dict[str, Any] | None = None
+    history: dict[str, Any] | None = None
     scan_type: str = "deep"
     status: str = "pending"
     created_at: str | None = None
@@ -1022,7 +1026,8 @@ def _check_vulnerabilities(deps: list[dict[str, str]]) -> dict[str, Any]:
 
 
 def _run_llm_analysis(
-    claude_md: str, file_tree: str, dep_audit: dict[str, Any]
+    claude_md: str, file_tree: str, dep_audit: dict[str, Any],
+    tech_debt_signals: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Send CLAUDE.md + context to Claude for architecture/security analysis."""
     if not ANTHROPIC_API_KEY:
@@ -1032,7 +1037,12 @@ def _run_llm_analysis(
     for v in dep_audit.get("vulnerabilities", []):
         vuln_summary += f"- {v['package']} {v['version']}: {v['cve_id']} ({v['severity']})\n"
 
-    prompt = f"""Analyze this CLAUDE.md file and repository structure. Provide a concise, actionable report.
+    debt_summary = ""
+    if tech_debt_signals:
+        for s in tech_debt_signals[:20]:
+            debt_summary += f"- [{s['severity']}] {s['file']}:{s.get('line', '?')} — {s['message']}\n"
+
+    prompt = f"""Analyze this repository. You are a senior engineer doing a paid code review. Be specific, reference actual files, and include code examples for every recommendation.
 
 ## File Tree
 ```
@@ -1046,20 +1056,33 @@ def _run_llm_analysis(
 
 {f"## Known Vulnerabilities{chr(10)}{vuln_summary}" if vuln_summary else "No known vulnerabilities found."}
 
+{f"## Tech Debt Signals{chr(10)}{debt_summary}" if debt_summary else "No significant tech debt signals."}
+
 Respond in this exact JSON format:
 {{
-  "architecture": "2-3 paragraph assessment of the project architecture, organization, and patterns. Be specific about what's good and what could improve.",
-  "security": "2-3 paragraph security review. Cover credential handling, input validation, dependency risks, and any concerns from the code structure.",
+  "architecture": "2-3 paragraph assessment of the project architecture, organization, and patterns. Reference specific directories and files. Identify strengths and weaknesses.",
+  "security": "2-3 paragraph security review. Cover credential handling, input validation, dependency risks, and specific concerns from the file tree and code structure.",
   "improvements": [
-    {{"priority": "high|medium|low", "title": "Short title", "description": "Specific, actionable recommendation"}},
-    ... (provide 5-8 items, most impactful first)
+    {{
+      "priority": "high|medium|low",
+      "title": "Short title",
+      "description": "Specific, actionable recommendation explaining WHY this matters",
+      "file": "path/to/relevant/file (if applicable, else null)",
+      "code_before": "problematic code snippet or null if new addition",
+      "code_after": "improved code snippet showing the fix"
+    }},
+    ... (provide 5-8 items, most impactful first, each with concrete code examples)
   ]
 }}
 
-Be direct and specific. Reference actual files/patterns from the tree. No generic advice."""
+Rules:
+- Every improvement MUST include code_before/code_after showing the actual fix (use null for code_before only when recommending adding a new file)
+- Reference real files from the tree, not hypothetical ones
+- No generic advice like "add tests" — specify WHICH code needs testing and show a test skeleton
+- Be direct and opinionated"""
 
     try:
-        with httpx.Client(timeout=60) as client:
+        with httpx.Client(timeout=90) as client:
             resp = client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={
@@ -1077,7 +1100,6 @@ Be direct and specific. Reference actual files/patterns from the tree. No generi
             data = resp.json()
             text = data["content"][0]["text"]
 
-            # Extract JSON from response (may be wrapped in markdown code block)
             import re as _re
 
             json_match = _re.search(r"\{[\s\S]*\}", text)
@@ -1087,6 +1109,157 @@ Be direct and specific. Reference actual files/patterns from the tree. No generi
     except Exception as exc:
         logger.warning("LLM analysis failed: %s", exc)
         return {"error": f"AI analysis unavailable: {type(exc).__name__}"}
+
+
+def _check_compliance(repo_path: Path) -> dict[str, Any]:
+    """Check for standard repo files and best practices."""
+    checks = {
+        "LICENSE": {"path": "LICENSE*", "label": "License file", "weight": "high"},
+        "README": {"path": "README*", "label": "README", "weight": "high"},
+        "CHANGELOG": {"path": "CHANGELOG*", "label": "Changelog", "weight": "medium"},
+        "CONTRIBUTING": {"path": "CONTRIBUTING*", "label": "Contributing guide", "weight": "low"},
+        "SECURITY": {"path": "SECURITY*", "label": "Security policy", "weight": "medium"},
+        "gitignore": {"path": ".gitignore", "label": ".gitignore", "weight": "high"},
+        "CI config": {"path": ".github/workflows/*", "label": "CI/CD workflows", "weight": "high"},
+        "Lock file": {"path": None, "label": "Dependency lock file", "weight": "medium"},
+        "Type config": {"path": None, "label": "Type checking config", "weight": "low"},
+        "Editor config": {"path": ".editorconfig", "label": "Editor config", "weight": "low"},
+    }
+
+    results: list[dict[str, Any]] = []
+    import glob as _glob
+
+    for name, check in checks.items():
+        if name == "Lock file":
+            found = any(
+                (repo_path / f).exists()
+                for f in ("package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+                          "Pipfile.lock", "poetry.lock", "Cargo.lock", "uv.lock")
+            )
+        elif name == "Type config":
+            found = any(
+                (repo_path / f).exists()
+                for f in ("tsconfig.json", "mypy.ini", "pyrightconfig.json",
+                          "pyproject.toml")  # pyproject often has [tool.mypy]
+            )
+        elif check["path"]:
+            found = bool(_glob.glob(str(repo_path / check["path"])))
+        else:
+            found = False
+
+        results.append({
+            "name": name,
+            "label": check["label"],
+            "found": found,
+            "weight": check["weight"],
+        })
+
+    passed = sum(1 for r in results if r["found"])
+    total = len(results)
+    score = round((passed / total) * 100) if total else 0
+
+    return {"checks": results, "passed": passed, "total": total, "score": score}
+
+
+def _run_context_hygiene(claude_md: str) -> dict[str, Any]:
+    """Run context-hygiene analysis on the generated CLAUDE.md."""
+    try:
+        from context_hygiene.models import Segment
+        from context_hygiene.staleness import staleness_fast
+        from context_hygiene.deadweight import deadweight_fast
+        from context_hygiene.contradictions import contradictions_fast
+
+        # Treat each major section as a segment
+        sections = claude_md.split("\n## ")
+        segments = []
+        for i, section in enumerate(sections):
+            text = section if i == 0 else f"## {section}"
+            segments.append(Segment(
+                index=i,
+                role="assistant",
+                content=text,
+                token_estimate=len(text.split()),
+            ))
+
+        if not segments:
+            return {"error": "No content to analyze"}
+
+        stale = staleness_fast(segments)
+        dead = deadweight_fast(segments)
+        contradictions = contradictions_fast(segments)
+
+        stale_issues = [
+            {"section": s.segment_index, "score": round(s.score, 2), "reasons": s.reasons}
+            for s in stale if s.score > 0.3
+        ]
+        dead_issues = [
+            {"section": d.segment_index, "reason": d.reason,
+             "tokens_recoverable": d.tokens_recoverable}
+            for d in dead
+        ]
+        contradiction_issues = [
+            {"description": c.description, "confidence": round(c.confidence, 2)}
+            for c in contradictions if c.confidence > 0.5
+        ]
+
+        total_issues = len(stale_issues) + len(dead_issues) + len(contradiction_issues)
+        if total_issues == 0:
+            grade = "A"
+        elif total_issues <= 2:
+            grade = "B"
+        elif total_issues <= 5:
+            grade = "C"
+        else:
+            grade = "D"
+
+        return {
+            "grade": grade,
+            "staleness": stale_issues,
+            "deadweight": dead_issues,
+            "contradictions": contradiction_issues,
+            "total_issues": total_issues,
+        }
+    except ImportError:
+        return {"error": "context-hygiene not available"}
+    except Exception as exc:
+        logger.warning("Context hygiene analysis failed: %s", exc)
+        return {"error": f"Analysis failed: {type(exc).__name__}"}
+
+
+def _get_scan_history(repo_url: str, current_scan_id: str) -> dict[str, Any] | None:
+    """Get previous deep scan results for the same repo to show improvement."""
+    conn = _get_db()
+    try:
+        row = conn.execute(
+            """
+            SELECT scan_id, score, completed_at, recommendations
+            FROM scans
+            WHERE repo_url = ? AND scan_type = 'deep' AND status = 'complete'
+                  AND scan_id != ?
+            ORDER BY completed_at DESC LIMIT 1
+            """,
+            (repo_url, current_scan_id),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        return None
+
+    prev = dict(row)
+    prev_recs = {}
+    try:
+        prev_recs = json_module.loads(prev.get("recommendations", "{}"))
+    except (json_module.JSONDecodeError, TypeError):
+        pass
+
+    prev_scores = prev_recs.get("category_scores", {}) if isinstance(prev_recs, dict) else {}
+    return {
+        "previous_scan_id": prev["scan_id"],
+        "previous_score": prev.get("score"),
+        "previous_date": prev.get("completed_at"),
+        "previous_categories": prev_scores.get("categories", {}),
+    }
 
 
 def _compute_category_scores(
@@ -1218,11 +1391,12 @@ def _compute_category_scores(
 
 
 def _run_deep_scan(scan_id: str, repo_url: str) -> None:
-    """Execute a deep scan with LLM analysis, dependency audit, and scoring."""
+    """Execute a deep scan with LLM analysis, dependency audit, scoring, and hygiene check."""
     import shutil
     import tempfile
 
     from anchormd.analyzers import run_all
+    from anchormd.analyzers.tech_debt import TechDebtAnalyzer
     from anchormd.generators.composer import DocumentComposer
     from anchormd.models import ForgeConfig
     from anchormd.scanner import CodebaseScanner
@@ -1237,6 +1411,9 @@ def _run_deep_scan(scan_id: str, repo_url: str) -> None:
     tmp_dir = tempfile.mkdtemp(prefix="anchormd-deep-")
     clone_path = Path(tmp_dir) / "repo"
 
+    tech_debt_signals: list[dict[str, Any]] = []
+    compliance: dict[str, Any] = {}
+
     try:
         # Clone and generate CLAUDE.md
         clone_repo(normalized_url, clone_path)
@@ -1248,9 +1425,17 @@ def _run_deep_scan(scan_id: str, repo_url: str) -> None:
         content = composer.compose(structure, analyses)
         score = composer.estimate_quality_score(content)
 
-        # While clone is on disk: parse deps and build file tree
+        # Extract tech debt signals from analyzer results
+        for analysis in analyses:
+            findings = analysis.findings if hasattr(analysis, "findings") else {}
+            if isinstance(findings, dict) and "signals" in findings:
+                tech_debt_signals = findings["signals"]
+                break
+
+        # While clone is on disk: parse deps, build file tree, check compliance
         file_tree = _build_file_tree(clone_path)
         deps = _parse_dependencies(clone_path)
+        compliance = _check_compliance(clone_path)
     except Exception as exc:
         logger.exception("Deep scan generation failed for %s", scan_id)
         _deep_scan_error(scan_id, f"Scan failed: {type(exc).__name__}: {exc}")
@@ -1261,14 +1446,29 @@ def _run_deep_scan(scan_id: str, repo_url: str) -> None:
     # Run dependency audit (independent, can fail gracefully)
     dep_audit = _check_vulnerabilities(deps)
 
-    # Run LLM analysis (independent, can fail gracefully)
-    llm_result = _run_llm_analysis(content, file_tree, dep_audit)
+    # Run LLM analysis with tech debt context (independent, can fail gracefully)
+    llm_result = _run_llm_analysis(content, file_tree, dep_audit, tech_debt_signals)
 
     # Compute category scores
     category_scores = _compute_category_scores(content, dep_audit.get("vulnerabilities", []))
 
+    # Run context-hygiene on generated CLAUDE.md
+    hygiene = _run_context_hygiene(content)
+
+    # Check for previous scans of same repo (scan history)
+    history = _get_scan_history(repo_url, scan_id)
+
     # Build enriched recommendations from LLM improvements
     recommendations = llm_result.get("improvements", []) if "error" not in llm_result else []
+
+    # Build structured tech debt summary for report
+    tech_debt_report = {
+        "total_signals": len(tech_debt_signals),
+        "critical": [s for s in tech_debt_signals if s.get("severity") == "critical"],
+        "high": [s for s in tech_debt_signals if s.get("severity") == "high"],
+        "medium": [s for s in tech_debt_signals if s.get("severity") == "medium"],
+        "low": [s for s in tech_debt_signals if s.get("severity") == "low"],
+    }
 
     # Assemble full report data
     report_data = {
@@ -1276,6 +1476,10 @@ def _run_deep_scan(scan_id: str, repo_url: str) -> None:
         "dependency_audit": dep_audit,
         "category_scores": category_scores,
         "recommendations": recommendations,
+        "tech_debt": tech_debt_report,
+        "compliance": compliance,
+        "hygiene": hygiene,
+        "history": history,
     }
 
     conn = _get_db()
@@ -1486,11 +1690,19 @@ async def get_deep_scan_report(scan_id: str) -> DeepScanReport:
         llm_analysis = None
         dependency_audit = None
         category_scores = None
+        tech_debt = None
+        compliance = None
+        hygiene = None
+        history = None
     else:
         recommendations = report_data.get("recommendations", [])
         llm_analysis = report_data.get("llm_analysis")
         dependency_audit = report_data.get("dependency_audit")
         category_scores = report_data.get("category_scores")
+        tech_debt = report_data.get("tech_debt")
+        compliance = report_data.get("compliance")
+        hygiene = report_data.get("hygiene")
+        history = report_data.get("history")
 
     return DeepScanReport(
         scan_id=row_dict["scan_id"],
@@ -1503,6 +1715,10 @@ async def get_deep_scan_report(scan_id: str) -> DeepScanReport:
         llm_analysis=llm_analysis,
         dependency_audit=dependency_audit,
         category_scores=category_scores,
+        tech_debt=tech_debt,
+        compliance=compliance,
+        hygiene=hygiene,
+        history=history,
         scan_type="deep",
         status=row_dict["status"],
         created_at=row_dict.get("created_at"),

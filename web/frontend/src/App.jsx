@@ -220,6 +220,10 @@ function DeepScanReportView({ report }) {
   const scores = report.category_scores;
   const llm = report.llm_analysis;
   const deps = report.dependency_audit;
+  const debt = report.tech_debt;
+  const compliance = report.compliance;
+  const hygiene = report.hygiene;
+  const history = report.history;
 
   return (
     <div className="pb-12 pt-6">
@@ -252,7 +256,128 @@ function DeepScanReportView({ report }) {
                 <p className="text-gray-500 text-xs">{cat.details}</p>
               </div>
             ))}
+          {/* Scan History Comparison */}
+          {history && (
+            <div className="mt-4 bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-gray-400 text-sm font-medium">vs previous scan</span>
+                <span className="text-gray-500 text-xs">
+                  {history.previous_date ? new Date(history.previous_date).toLocaleDateString() : ""}
+                </span>
+              </div>
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex items-center gap-1">
+                  <span className="text-gray-400 text-sm">Overall:</span>
+                  <span className="text-white font-bold">{history.previous_score}</span>
+                  <span className="text-gray-500">→</span>
+                  <span className="text-white font-bold">{scores.overall}</span>
+                  {scores.overall > history.previous_score ? (
+                    <span className="text-green-400 text-sm font-medium">+{scores.overall - history.previous_score}</span>
+                  ) : scores.overall < history.previous_score ? (
+                    <span className="text-red-400 text-sm font-medium">{scores.overall - history.previous_score}</span>
+                  ) : (
+                    <span className="text-gray-500 text-sm">=</span>
+                  )}
+                </div>
+                {Object.entries(history.previous_categories || {}).map(([key, prev]) => {
+                  const curr = scores.categories?.[key];
+                  if (!curr) return null;
+                  const diff = curr.score - prev.score;
+                  if (diff === 0) return null;
+                  return (
+                    <div key={key} className="flex items-center gap-1">
+                      <span className="text-gray-500 text-xs">{curr.label}:</span>
+                      <span className={`text-xs font-medium ${diff > 0 ? "text-green-400" : "text-red-400"}`}>
+                        {diff > 0 ? `+${diff}` : diff}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           </div>
+        </div>
+      )}
+
+      {/* Compliance Checklist */}
+      {compliance && compliance.checks && (
+        <div className="mb-8">
+          <div className="flex items-center gap-3 mb-4">
+            <h2 className="text-white text-xl font-semibold">Compliance Checklist</h2>
+            <span className="text-gray-400 text-sm">{compliance.passed}/{compliance.total} passed</span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+            {compliance.checks.map((check, i) => (
+              <div
+                key={i}
+                className={`rounded-lg p-3 border ${
+                  check.found
+                    ? "bg-green-950/20 border-green-800/40"
+                    : "bg-red-950/20 border-red-800/40"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className={check.found ? "text-green-400" : "text-red-400"}>
+                    {check.found ? "\u2713" : "\u2717"}
+                  </span>
+                  <span className="text-gray-300 text-sm">{check.label}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Tech Debt Findings */}
+      {debt && debt.total_signals > 0 && (
+        <div className="mb-8">
+          <div className="flex items-center gap-3 mb-4">
+            <h2 className="text-white text-xl font-semibold">Tech Debt</h2>
+            <span className="text-gray-400 text-sm">{debt.total_signals} signals found</span>
+          </div>
+          {debt.critical && debt.critical.length > 0 && (
+            <div className="mb-3">
+              <h3 className="text-red-400 text-sm font-semibold uppercase tracking-wide mb-2">Critical ({debt.critical.length})</h3>
+              <div className="space-y-1">
+                {debt.critical.slice(0, 10).map((s, i) => (
+                  <div key={i} className="bg-red-950/20 border border-red-800/30 rounded px-3 py-2 text-sm">
+                    <span className="text-gray-400 font-mono text-xs">{s.file}{s.line ? `:${s.line}` : ""}</span>
+                    <span className="text-gray-300 ml-2">{s.message}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {debt.high && debt.high.length > 0 && (
+            <div className="mb-3">
+              <h3 className="text-orange-400 text-sm font-semibold uppercase tracking-wide mb-2">High ({debt.high.length})</h3>
+              <div className="space-y-1">
+                {debt.high.slice(0, 10).map((s, i) => (
+                  <div key={i} className="bg-orange-950/20 border border-orange-800/30 rounded px-3 py-2 text-sm">
+                    <span className="text-gray-400 font-mono text-xs">{s.file}{s.line ? `:${s.line}` : ""}</span>
+                    <span className="text-gray-300 ml-2">{s.message}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {debt.medium && debt.medium.length > 0 && (
+            <div className="mb-3">
+              <h3 className="text-yellow-400 text-sm font-semibold uppercase tracking-wide mb-2">Medium ({debt.medium.length})</h3>
+              <div className="space-y-1">
+                {debt.medium.slice(0, 5).map((s, i) => (
+                  <div key={i} className="bg-yellow-950/20 border border-yellow-800/30 rounded px-3 py-2 text-sm">
+                    <span className="text-gray-400 font-mono text-xs">{s.file}{s.line ? `:${s.line}` : ""}</span>
+                    <span className="text-gray-300 ml-2">{s.message}</span>
+                  </div>
+                ))}
+                {debt.medium.length > 5 && (
+                  <p className="text-gray-500 text-xs pl-3">+ {debt.medium.length - 5} more</p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -319,13 +444,47 @@ function DeepScanReportView({ report }) {
         </div>
       )}
 
-      {/* Recommendations */}
+      {/* Context Hygiene */}
+      {hygiene && !hygiene.error && hygiene.total_issues > 0 && (
+        <div className="mb-8">
+          <div className="flex items-center gap-3 mb-4">
+            <h2 className="text-white text-xl font-semibold">CLAUDE.md Quality</h2>
+            <GradeBadge grade={hygiene.grade} size="sm" />
+            <span className="text-gray-400 text-sm">{hygiene.total_issues} issue{hygiene.total_issues !== 1 ? "s" : ""} found</span>
+          </div>
+          <div className="space-y-2">
+            {hygiene.contradictions && hygiene.contradictions.map((c, i) => (
+              <div key={`c-${i}`} className="bg-red-950/20 border border-red-800/30 rounded-lg p-3">
+                <span className="text-red-400 text-xs font-semibold uppercase mr-2">Contradiction</span>
+                <span className="text-gray-300 text-sm">{c.description}</span>
+              </div>
+            ))}
+            {hygiene.staleness && hygiene.staleness.map((s, i) => (
+              <div key={`s-${i}`} className="bg-yellow-950/20 border border-yellow-800/30 rounded-lg p-3">
+                <span className="text-yellow-400 text-xs font-semibold uppercase mr-2">Stale</span>
+                <span className="text-gray-300 text-sm">{s.reasons?.join(", ") || "Potentially outdated content"}</span>
+              </div>
+            ))}
+            {hygiene.deadweight && hygiene.deadweight.map((d, i) => (
+              <div key={`d-${i}`} className="bg-gray-800 border border-gray-700 rounded-lg p-3">
+                <span className="text-gray-400 text-xs font-semibold uppercase mr-2">Deadweight</span>
+                <span className="text-gray-300 text-sm">{d.reason}</span>
+                {d.tokens_recoverable > 0 && (
+                  <span className="text-gray-500 text-xs ml-2">({d.tokens_recoverable} tokens recoverable)</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Recommendations with Code Snippets */}
       {report.recommendations && report.recommendations.length > 0 && (
         <div className="mb-8">
           <h2 className="text-white text-xl font-semibold mb-4">
             Priority Actions
           </h2>
-          <div className="space-y-3">
+          <div className="space-y-4">
             {report.recommendations.map((rec, i) => (
               <div
                 key={i}
@@ -334,8 +493,31 @@ function DeepScanReportView({ report }) {
                 <div className="flex items-center gap-2 mb-2">
                   <PriorityBadge priority={rec.priority} />
                   <h3 className="text-white font-medium">{rec.title}</h3>
+                  {rec.file && (
+                    <span className="text-gray-500 text-xs font-mono">{rec.file}</span>
+                  )}
                 </div>
-                <p className="text-gray-400 text-sm">{rec.description}</p>
+                <p className="text-gray-400 text-sm mb-3">{rec.description}</p>
+                {(rec.code_before || rec.code_after) && (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+                    {rec.code_before && (
+                      <div>
+                        <span className="text-red-400 text-xs font-semibold uppercase">Before</span>
+                        <pre className="mt-1 bg-red-950/20 border border-red-800/20 rounded p-3 text-xs text-gray-300 font-mono overflow-x-auto whitespace-pre-wrap">
+                          {rec.code_before}
+                        </pre>
+                      </div>
+                    )}
+                    {rec.code_after && (
+                      <div>
+                        <span className="text-green-400 text-xs font-semibold uppercase">After</span>
+                        <pre className="mt-1 bg-green-950/20 border border-green-800/20 rounded p-3 text-xs text-gray-300 font-mono overflow-x-auto whitespace-pre-wrap">
+                          {rec.code_after}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>
