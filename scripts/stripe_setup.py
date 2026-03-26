@@ -28,7 +28,7 @@ except ImportError:
     print("Install stripe: pip install stripe", file=sys.stderr)  # noqa: T201
     sys.exit(1)
 
-BUNDLE_PRODUCTS = "anchormd,agent-lint,ai-spend,promptctl,context-hygiene"
+BUNDLE_PRODUCTS = "anchormd,agent-lint,ai-spend,promptctl,context-hygiene,auditchain"
 
 
 def main() -> None:

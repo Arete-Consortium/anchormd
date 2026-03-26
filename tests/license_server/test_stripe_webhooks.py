@@ -298,8 +298,8 @@ class TestBundleCheckout:
 
     def test_default_bundle_products_when_empty(self, db):
         result = handle_checkout_completed(_bundle_checkout_event(products=""))
-        # Should fall back to BUNDLE_PRODUCTS (all 5)
-        assert len(result["licenses"]) == 5
+        # Should fall back to BUNDLE_PRODUCTS (all 6, including auditchain)
+        assert len(result["licenses"]) == 6
 
     def test_bundle_revocation_revokes_all(self, db):
         handle_checkout_completed(_bundle_checkout_event(subscription_id="sub_bundle_rev"))

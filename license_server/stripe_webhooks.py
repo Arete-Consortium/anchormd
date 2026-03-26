@@ -26,7 +26,7 @@ from license_server.key_gen import generate_key, hash_key, mask_key, validate_ke
 logger = logging.getLogger(__name__)
 
 # Products included in the "bundle" offering
-BUNDLE_PRODUCTS = ["anchormd", "agent-lint", "ai-spend", "promptctl", "context-hygiene"]
+BUNDLE_PRODUCTS = ["anchormd", "agent-lint", "ai-spend", "promptctl", "context-hygiene", "auditchain"]
 
 
 def _create_license(
