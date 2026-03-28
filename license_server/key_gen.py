@@ -19,6 +19,7 @@ PRODUCT_KEY_CONFIG: dict[str, tuple[str, str]] = {
     "promptctl": ("PCTL", "promptctl-v1"),
     "context-hygiene": ("CTHG", "context-hygiene-v1"),
     "auditchain": ("ACHN", "auditchain-v1"),
+    "azure-ops-mcp": ("AOMC", "azure-ops-mcp-v1"),
 }
 
 _DEFAULT_PRODUCT = "anchormd"
