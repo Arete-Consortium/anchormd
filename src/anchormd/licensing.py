@@ -109,6 +109,7 @@ TIER_DEFINITIONS: dict[Tier, TierConfig] = {
             "drift_html_report",
             "tech_debt",
             "github_health",
+            "opsec",
             "cleanup",
         ],
         preset_access=[
@@ -149,6 +150,7 @@ PRO_FEATURES: frozenset[str] = frozenset(
         "drift_html_report",
         "tech_debt",
         "github_health",
+        "opsec",
         "cleanup",
     }
 )

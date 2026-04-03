@@ -673,6 +673,147 @@ def tech_debt(
         raise typer.Exit(1) from e
 
 
+@app.command(name="opsec")
+@require_pro("opsec")
+@require_quota("deep_scan")
+def opsec(
+    path: Path = typer.Argument(Path("."), help="Path to project root"),  # noqa: B008
+    output_json: bool = typer.Option(  # noqa: B008
+        False, "--json", help="Output results as JSON"
+    ),
+    verbose: bool = typer.Option(  # noqa: B008
+        False, "-v", "--verbose", help="Show all findings, not just critical/high"
+    ),
+    fail_below: int = typer.Option(  # noqa: B008
+        0, "--fail-below", help="Exit with code 2 if score is below this threshold"
+    ),
+) -> None:
+    """Scan codebase for OPSEC leaks: secrets, local paths, strategy docs. [Pro]"""
+    track_command("opsec")
+    try:
+        root = path.resolve()
+        if not root.is_dir():
+            console.print(f"[red]Error:[/red] {root} is not a directory.")
+            raise typer.Exit(1)
+
+        config = ForgeConfig(root_path=root)
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Scanning codebase...", total=None)
+            scanner = CodebaseScanner(config)
+            structure = scanner.scan()
+            progress.update(task, description=f"Scanned {structure.total_files} files")
+
+            task = progress.add_task("Running OPSEC scan...", total=None)
+            from anchormd.analyzers.opsec import OpsecAnalyzer
+
+            analyzer = OpsecAnalyzer()
+            result = analyzer.analyze(structure, config)
+            progress.update(task, description="Done")
+
+        findings = result.findings
+        all_findings = findings.get("findings", [])
+        score = findings.get("score", 100)
+
+        if output_json:
+            print(json.dumps(findings, indent=2))  # noqa: T201
+        else:
+            # Score display
+            score_color = (
+                "green" if score >= 80 else "yellow" if score >= 50 else "red"
+            )
+            grade = (
+                "A" if score >= 90 else "B" if score >= 80 else "C" if score >= 70
+                else "D" if score >= 50 else "F"
+            )
+
+            console.print()
+            console.print(
+                Panel(
+                    f"  Score: [{score_color}]{score}/100 ({grade})[/{score_color}]\n"
+                    f"  Findings: {findings.get('total_findings', 0)}\n"
+                    f"  Critical: {findings.get('critical_count', 0)}  "
+                    f"High: {findings.get('high_count', 0)}  "
+                    f"Medium: {findings.get('medium_count', 0)}  "
+                    f"Low: {findings.get('low_count', 0)}",
+                    title="OPSEC Scan",
+                    border_style=score_color,
+                )
+            )
+
+            # Category breakdown
+            categories = findings.get("categories", {})
+            if categories:
+                cat_table = Table(title="Findings by Category")
+                cat_table.add_column("Category", style="bold")
+                cat_table.add_column("Count", justify="right")
+                for cat, count in sorted(categories.items(), key=lambda x: -x[1]):
+                    label = cat.replace("_", " ").title()
+                    cat_table.add_row(label, str(count))
+                console.print(cat_table)
+
+            # Findings
+            if all_findings:
+                if verbose:
+                    show = all_findings
+                else:
+                    show = [
+                        f for f in all_findings
+                        if f["severity"] in ("critical", "high")
+                    ]
+
+                if show:
+                    tbl = Table(
+                        title="Priority Items" if not verbose else "All Findings"
+                    )
+                    tbl.add_column("Severity", style="bold")
+                    tbl.add_column("File")
+                    tbl.add_column("Message")
+
+                    severity_styles = {
+                        "critical": "red bold",
+                        "high": "red",
+                        "medium": "yellow",
+                        "low": "blue",
+                    }
+
+                    for f in show[:50]:
+                        style = severity_styles.get(f["severity"], "white")
+                        loc = f["file"]
+                        if f.get("line"):
+                            loc += f":{f['line']}"
+                        tbl.add_row(
+                            f"[{style}]{f['severity'].upper()}[/{style}]",
+                            loc,
+                            f["message"][:100],
+                        )
+
+                    console.print(tbl)
+
+                    if not verbose:
+                        remaining = len(all_findings) - len(show)
+                        if remaining > 0:
+                            console.print(
+                                f"\n[dim]{remaining} lower-severity findings hidden. "
+                                f"Use -v to show all.[/dim]"
+                            )
+                else:
+                    console.print("\n[green]No critical or high-severity findings.[/green]")
+
+        record_scan_usage("deep_scan", hashlib.sha256(str(root).encode()).hexdigest()[:16])
+
+        if score < fail_below:
+            raise typer.Exit(2)
+
+    except ForgeError as e:
+        console.print(Panel(str(e), title="Error", border_style="red"))
+        raise typer.Exit(1) from e
+
+
 @app.command(name="github-health")
 @require_pro("github_health")
 @require_quota("deep_scan")

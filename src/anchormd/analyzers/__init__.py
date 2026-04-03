@@ -6,6 +6,7 @@ from anchormd.analyzers.commands import CommandAnalyzer
 from anchormd.analyzers.domain import DomainAnalyzer
 from anchormd.analyzers.github import GitHubAnalyzer
 from anchormd.analyzers.language import LanguageAnalyzer
+from anchormd.analyzers.opsec import OpsecAnalyzer
 from anchormd.analyzers.patterns import PatternAnalyzer
 from anchormd.analyzers.skills import SkillsAnalyzer
 from anchormd.analyzers.tech_debt import TechDebtAnalyzer
@@ -19,6 +20,7 @@ ANALYZERS: list[type] = [
     SkillsAnalyzer,
     TechDebtAnalyzer,
     GitHubAnalyzer,
+    OpsecAnalyzer,
 ]
 
 

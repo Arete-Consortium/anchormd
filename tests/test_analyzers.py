@@ -8,6 +8,7 @@ from anchormd.analyzers import run_all
 from anchormd.analyzers.commands import CommandAnalyzer
 from anchormd.analyzers.domain import DomainAnalyzer
 from anchormd.analyzers.language import LanguageAnalyzer
+from anchormd.analyzers.opsec import OpsecAnalyzer
 from anchormd.analyzers.patterns import PatternAnalyzer
 from anchormd.analyzers.skills import SkillsAnalyzer
 from anchormd.models import ForgeConfig
@@ -299,10 +300,10 @@ class TestDomainAnalyzer:
 
 
 class TestRegistry:
-    def test_run_all_returns_seven_results(self, tmp_project: Path) -> None:
+    def test_run_all_returns_eight_results(self, tmp_project: Path) -> None:
         structure, config = _scan(tmp_project)
         results = run_all(structure, config)
-        assert len(results) == 7
+        assert len(results) == 8
 
     def test_all_categories_present(self, tmp_project: Path) -> None:
         structure, config = _scan(tmp_project)
@@ -310,7 +311,7 @@ class TestRegistry:
         categories = {r.category for r in results}
         assert categories == {
             "language", "patterns", "commands", "domain", "skills",
-            "tech_debt", "github",
+            "tech_debt", "github", "opsec",
         }
 
     def test_all_valid_analysis_results(self, tmp_project: Path) -> None:
@@ -381,3 +382,101 @@ class TestSkillsAnalyzer:
         result = SkillsAnalyzer().analyze(structure, config)
         if result.section_content:
             assert "## AI Skills" in result.section_content
+
+
+class TestOpsecAnalyzer:
+    def test_clean_project_scores_100(self, tmp_project: Path) -> None:
+        structure, config = _scan(tmp_project)
+        result = OpsecAnalyzer().analyze(structure, config)
+        assert result.category == "opsec"
+        assert result.findings["score"] == 100
+        assert result.findings["total_findings"] == 0
+
+    def test_detects_local_home_path(self, tmp_path: Path) -> None:
+        src = tmp_path / "deploy.sh"
+        src.write_text('FLYCTL="/home/james/.fly/bin/flyctl"\n')
+        structure, config = _scan(tmp_path)
+        result = OpsecAnalyzer().analyze(structure, config)
+        assert result.findings["total_findings"] > 0
+        found = result.findings["findings"]
+        assert any(f["category"] == "local_paths" for f in found)
+
+    def test_detects_api_key(self, tmp_path: Path) -> None:
+        src = tmp_path / "config.py"
+        src.write_text('API_KEY = "sk-ant-abc123defghijklmnopqrstuvwxyz"\n')
+        structure, config = _scan(tmp_path)
+        result = OpsecAnalyzer().analyze(structure, config)
+        found = result.findings["findings"]
+        assert any(f["category"] == "secrets" for f in found)
+        assert any(f["severity"] == "critical" for f in found)
+
+    def test_skips_env_example(self, tmp_path: Path) -> None:
+        src = tmp_path / ".env.example"
+        src.write_text('API_KEY=sk-ant-your-key-here\n')
+        structure, config = _scan(tmp_path)
+        result = OpsecAnalyzer().analyze(structure, config)
+        secrets = [f for f in result.findings["findings"] if f["category"] == "secrets"]
+        assert len(secrets) == 0
+
+    def test_skips_grep_patterns(self, tmp_path: Path) -> None:
+        src = tmp_path / "check.sh"
+        src.write_text('#!/bin/bash\ngrep -rn "sk-ant-" --include="*.py" .\n')
+        structure, config = _scan(tmp_path)
+        result = OpsecAnalyzer().analyze(structure, config)
+        secrets = [f for f in result.findings["findings"] if f["category"] == "secrets"]
+        assert len(secrets) == 0
+
+    def test_detects_strategy_doc(self, tmp_path: Path) -> None:
+        (tmp_path / "outreach.md").write_text("# Sales strategy\n")
+        structure, config = _scan(tmp_path)
+        result = OpsecAnalyzer().analyze(structure, config)
+        found = result.findings["findings"]
+        assert any(f["category"] == "strategy_docs" for f in found)
+
+    def test_detects_tracked_env(self, tmp_path: Path) -> None:
+        (tmp_path / ".env").write_text("SECRET=foo\n")
+        structure, config = _scan(tmp_path)
+        result = OpsecAnalyzer().analyze(structure, config)
+        found = result.findings["findings"]
+        assert any(
+            f["category"] == "credentials" and "Real .env" in f["message"]
+            for f in found
+        )
+
+    def test_detects_private_key(self, tmp_path: Path) -> None:
+        (tmp_path / "key.pem").write_text("-----BEGIN RSA PRIVATE KEY-----\nfoo\n")
+        structure, config = _scan(tmp_path)
+        result = OpsecAnalyzer().analyze(structure, config)
+        found = result.findings["findings"]
+        assert any(f["message"] == "Private key material found in tracked file" for f in found)
+
+    def test_detects_db_connection_string(self, tmp_path: Path) -> None:
+        (tmp_path / "config.py").write_text(
+            'DB_URL = "postgres://admin:s3cret@db.host:5432/app"\n'
+        )
+        structure, config = _scan(tmp_path)
+        result = OpsecAnalyzer().analyze(structure, config)
+        found = result.findings["findings"]
+        assert any(f["category"] == "credentials" for f in found)
+
+    def test_score_decreases_with_findings(self, tmp_path: Path) -> None:
+        (tmp_path / "bad.py").write_text(
+            'KEY = "sk-ant-reallylongfakeapikeyvalue1234567890"\n'
+            'FLYCTL = "/home/dev/.fly/bin/flyctl"\n'
+        )
+        structure, config = _scan(tmp_path)
+        result = OpsecAnalyzer().analyze(structure, config)
+        assert result.findings["score"] < 100
+
+    def test_confidence_scales_with_files(self, tmp_path: Path) -> None:
+        (tmp_path / "app.py").write_text("print('hello')\n")
+        structure, config = _scan(tmp_path)
+        result = OpsecAnalyzer().analyze(structure, config)
+        assert 0.0 < result.confidence <= 1.0
+
+    def test_skips_placeholder_passwords(self, tmp_path: Path) -> None:
+        (tmp_path / "config.py").write_text('password = "changeme"\n')
+        structure, config = _scan(tmp_path)
+        result = OpsecAnalyzer().analyze(structure, config)
+        creds = [f for f in result.findings["findings"] if f["category"] == "credentials"]
+        assert len(creds) == 0
