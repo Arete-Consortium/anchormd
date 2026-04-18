@@ -36,11 +36,16 @@ export default function AdminPage() {
       <h2 className="text-xl font-bold text-white mb-6">Admin Dashboard</h2>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
         <StatCard label="Total Scans" value={metrics.total_scans} />
-        <StatCard label="Unique Users" value={metrics.unique_users} />
+        <StatCard label="Scanners" value={metrics.unique_users} />
         <StatCard label="Avg Score" value={metrics.average_score} />
         <StatCard label="Error Rate" value={`${metrics.error_rate}%`} />
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-8">
+        <StatCard label="Total Signups" value={metrics.total_users} />
+        <StatCard label="Active Last 24h" value={metrics.dau} />
+        <StatCard label="Active Last 7d" value={metrics.wau} />
       </div>
 
       {/* Scans by day */}
@@ -66,6 +71,41 @@ export default function AdminPage() {
                   >
                     <div
                       className="bg-anchor-500 rounded-t w-full transition-all hover:bg-anchor-400"
+                      style={{ height: `${height}%` }}
+                    />
+                    <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-1 bg-gray-800 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10">
+                      {day.date}: {day.count}
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+        )}
+      </div>
+
+      {/* New users by day */}
+      <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6 mb-6">
+        <h3 className="text-white font-semibold mb-4">New Signups Per Day (Last 30 Days)</h3>
+        {metrics.new_users_by_day.length === 0 ? (
+          <p className="text-gray-500 text-sm">No signups yet</p>
+        ) : (
+          <div className="flex items-end gap-1 h-32">
+            {metrics.new_users_by_day
+              .slice()
+              .reverse()
+              .map((day) => {
+                const max = Math.max(
+                  ...metrics.new_users_by_day.map((d) => d.count),
+                  1
+                );
+                const height = Math.max((day.count / max) * 100, 4);
+                return (
+                  <div
+                    key={day.date}
+                    className="flex-1 min-w-[8px] group relative"
+                  >
+                    <div
+                      className="bg-green-500 rounded-t w-full transition-all hover:bg-green-400"
                       style={{ height: `${height}%` }}
                     />
                     <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-1 bg-gray-800 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10">

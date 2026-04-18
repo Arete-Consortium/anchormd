@@ -567,7 +567,7 @@ function DeepScanReportView({ report }) {
 }
 
 export default function App() {
-  const { user, loading: authLoading, logout } = useAuth();
+  const { user, loading: authLoading, logout, logoutEverywhere } = useAuth();
   const [page, setPage] = useState("home"); // "home" | "repos" | "admin"
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -888,6 +888,21 @@ export default function App() {
                   className="text-gray-500 hover:text-gray-300 text-xs ml-1"
                 >
                   Logout
+                </button>
+                <button
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        "Sign out of every device? All active sessions will be revoked.",
+                      )
+                    ) {
+                      logoutEverywhere();
+                    }
+                  }}
+                  className="text-gray-600 hover:text-red-400 text-xs"
+                  title="Revoke every active session for your account"
+                >
+                  Everywhere
                 </button>
               </div>
             ) : (

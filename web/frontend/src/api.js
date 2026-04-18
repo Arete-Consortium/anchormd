@@ -73,6 +73,14 @@ export async function getMe() {
   return apiGet("/api/auth/me");
 }
 
+export async function logoutSession() {
+  return apiPost("/api/auth/logout", {});
+}
+
+export async function logoutAllSessions() {
+  return apiPost("/api/auth/logout-all", {});
+}
+
 export async function listRepos() {
   return apiGet("/api/repos");
 }

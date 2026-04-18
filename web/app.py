@@ -7,20 +7,27 @@ import hashlib
 import json as json_module
 import logging
 import os
+import re
+import secrets
 import sqlite3
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import httpx
 import stripe
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from web.generator import generate_claude_md
 
@@ -30,7 +37,58 @@ logger = logging.getLogger(__name__)
 
 GITHUB_CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET", "")
-ADMIN_GITHUB_USERNAME = os.environ.get("ADMIN_GITHUB_USERNAME", "AreteDriver")
+ADMIN_GITHUB_USERNAME = os.environ.get("ADMIN_GITHUB_USERNAME", "").strip()
+
+# Fernet key(s) for encrypting GitHub access tokens at rest. Set via
+# `fly secrets set ANCHORMD_TOKEN_KEY=$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")`
+# During rotation, supply comma-separated keys: new key first, old key second. The
+# first key is used for encryption; every key is tried for decryption. Once all
+# ciphertext has been re-encrypted by the new primary, drop the old key.
+# Required — the app refuses to start without it.
+_TOKEN_KEYS = [k.strip() for k in os.environ.get("ANCHORMD_TOKEN_KEY", "").split(",") if k.strip()]
+_fernet: MultiFernet | None = (
+    MultiFernet([Fernet(k.encode()) for k in _TOKEN_KEYS]) if _TOKEN_KEYS else None
+)
+
+
+def _encrypt_token(plain: str) -> bytes:
+    """Encrypt a GitHub access token for storage with the primary key."""
+    if _fernet is None:
+        raise RuntimeError("ANCHORMD_TOKEN_KEY is not configured")
+    return _fernet.encrypt(plain.encode())
+
+
+def _decrypt_token(cipher: bytes | None) -> str | None:
+    """Decrypt a stored GitHub access token, trying every configured key."""
+    if _fernet is None or not cipher:
+        return None
+    try:
+        return _fernet.decrypt(cipher).decode()
+    except InvalidToken:
+        logger.warning("Failed to decrypt stored token — key rotated out or corrupt value")
+        return None
+
+
+def _hash_session_token(token: str) -> str:
+    """Hash a session bearer token for storage."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+# Sessions expire 30 days after last use; sliding window extended when within
+# this threshold so active users aren't logged out mid-session.
+_SESSION_TTL = timedelta(days=30)
+_SESSION_RENEW_WHEN_UNDER = timedelta(days=7)
+
+
+def _gh_token_for(user: dict[str, Any]) -> str:
+    """Return the decrypted GitHub access token for a user, or raise 401."""
+    plain = _decrypt_token(user.get("access_token_encrypted"))
+    if not plain:
+        raise HTTPException(
+            status_code=401,
+            detail="GitHub credentials unavailable — please sign in again",
+        )
+    return plain
 
 # Stripe configuration.
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
@@ -44,7 +102,7 @@ if STRIPE_SECRET_KEY:
     stripe.api_key = STRIPE_SECRET_KEY
 
 # Database path — configurable via env but defaults to local.
-DB_PATH = Path(__file__).parent / "scans.db"
+DB_PATH = Path(os.environ.get("ANCHORMD_DB_PATH", Path(__file__).parent / "scans.db"))
 
 # Static files path (built React frontend).
 STATIC_DIR = Path(__file__).parent / "frontend" / "dist"
@@ -101,6 +159,23 @@ def _init_db() -> None:
                 created_at REAL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                token_hash TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                last_used_at TEXT NOT NULL,
+                expires_at TEXT,
+                revoked INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)"
+        )
+        # Migrate: add expires_at if missing.
+        session_cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+        if "expires_at" not in session_cols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN expires_at TEXT")
         # Migrate: add columns to scans if missing.
         existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(scans)").fetchall()}
         if "user_id" not in existing_cols:
@@ -115,6 +190,18 @@ def _init_db() -> None:
             conn.execute("ALTER TABLE scans ADD COLUMN stripe_session_id TEXT")
         if "email" not in existing_cols:
             conn.execute("ALTER TABLE scans ADD COLUMN email TEXT")
+        # Migrate: add last_seen_at + access_token_encrypted to users if missing.
+        user_cols = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+        if "last_seen_at" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN last_seen_at TEXT")
+        if "access_token_encrypted" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN access_token_encrypted BLOB")
+        # One-shot: scrub legacy plaintext GitHub tokens so they're not recoverable
+        # from the SQLite file. Users will need to re-authenticate (their bearer
+        # token in localStorage is also invalid after this point).
+        conn.execute(
+            "UPDATE users SET access_token = NULL WHERE access_token IS NOT NULL"
+        )
         conn.commit()
     finally:
         conn.close()
@@ -123,8 +210,61 @@ def _init_db() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> Any:  # noqa: ANN401
     """Initialize database on startup."""
+    if not ADMIN_GITHUB_USERNAME:
+        raise RuntimeError(
+            "ADMIN_GITHUB_USERNAME is not set. Refusing to start — "
+            "every user would be locked out of admin endpoints, or worse, "
+            "a stale default could silently grant admin to an unintended account."
+        )
+    if _fernet is None:
+        raise RuntimeError(
+            "ANCHORMD_TOKEN_KEY is not set. Refusing to start — "
+            "GitHub access tokens would be stored in plaintext."
+        )
     _init_db()
     yield
+
+
+def _rate_limit_key(request: Request) -> str:
+    """Prefer trusted forwarded IP (Fly sets Fly-Client-IP), fall back to peer."""
+    fly_ip = request.headers.get("fly-client-ip")
+    if fly_ip:
+        return fly_ip
+    return get_remote_address(request)
+
+
+limiter = Limiter(key_func=_rate_limit_key, default_limits=["120/minute"])
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Apply hardening headers to every response."""
+
+    _HEADERS = {
+        "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Permissions-Policy": "accelerometer=(), camera=(), geolocation=(), gyroscope=(), microphone=(), payment=(self \"https://checkout.stripe.com\"), usb=()",
+        "Content-Security-Policy": (
+            "default-src 'self'; "
+            "script-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https://avatars.githubusercontent.com https://*.githubusercontent.com; "
+            "font-src 'self' data:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self' https://checkout.stripe.com https://github.com; "
+            "object-src 'none'"
+        ),
+        "Cross-Origin-Opener-Policy": "same-origin",
+    }
+
+    async def dispatch(self, request: Request, call_next: Any) -> Response:
+        response = await call_next(request)
+        for k, v in self._HEADERS.items():
+            response.headers.setdefault(k, v)
+        return response
 
 
 app = FastAPI(
@@ -133,15 +273,63 @@ app = FastAPI(
     version="0.2.0",
     lifespan=lifespan,
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 # --- Models ---
+
+
+# GitHub: owner = 1-39 chars, alphanumeric or hyphens (no leading/trailing hyphen,
+# no consecutive hyphens). Repo = 1-100 chars, alphanumeric plus . _ -
+# Accepts a trailing `.git`, `/tree/...`, `/blob/...` etc. but only extracts owner/repo.
+_GITHUB_URL_RE = re.compile(
+    r"^https://github\.com/"
+    r"(?P<owner>[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38})/"
+    r"(?P<repo>[A-Za-z0-9._-]{1,100}?)"
+    r"(?:\.git)?(?:/.*)?$"
+)
+
+# Paths that live under github.com but aren't user repos.
+_GITHUB_RESERVED_OWNERS = frozenset({
+    "orgs", "search", "settings", "marketplace", "notifications",
+    "pulls", "issues", "stars", "explore", "topics", "trending",
+    "login", "logout", "sessions", "sponsors", "about", "features",
+    "enterprise", "pricing", "security", "contact", "api",
+})
+
+
+def _validate_github_url(value: str) -> str:
+    """Allow only https://github.com/<owner>/<repo>, normalizing extra path.
+
+    Blocks SSRF attempts (private IPs, internal hostnames, non-HTTP schemes) and
+    non-repo GitHub paths (/orgs/..., /search?q=..., raw content, etc.).
+    """
+    if not isinstance(value, str):
+        raise ValueError("repo_url must be a string")
+    stripped = value.strip()
+    if any(c.isspace() or ord(c) < 0x20 for c in stripped):
+        raise ValueError("repo_url contains invalid characters")
+    match = _GITHUB_URL_RE.match(stripped)
+    if not match:
+        raise ValueError("repo_url must be https://github.com/<owner>/<repo>")
+    owner = match.group("owner")
+    repo = match.group("repo").removesuffix(".git")
+    if owner.lower() in _GITHUB_RESERVED_OWNERS:
+        raise ValueError("repo_url must point to a user or organization repository")
+    return f"https://github.com/{owner}/{repo}"
 
 
 class ScanRequest(BaseModel):
     """Request body for POST /api/scan."""
 
     repo_url: str = Field(..., description="GitHub repository URL")
+
+    @field_validator("repo_url")
+    @classmethod
+    def _check_repo_url(cls, v: str) -> str:
+        return _validate_github_url(v)
 
 
 class ScanAllRequest(BaseModel):
@@ -194,6 +382,11 @@ class CheckoutRequest(BaseModel):
     repo_url: str = Field(..., description="GitHub repository URL")
     email: str = Field(..., description="Email for receipt delivery")
 
+    @field_validator("repo_url")
+    @classmethod
+    def _check_repo_url(cls, v: str) -> str:
+        return _validate_github_url(v)
+
 
 class CheckoutResponse(BaseModel):
     """Response for checkout session creation."""
@@ -230,7 +423,11 @@ class AdminMetrics(BaseModel):
 
     total_scans: int
     unique_users: int
+    total_users: int
+    dau: int
+    wau: int
     scans_by_day: list[dict[str, Any]]
+    new_users_by_day: list[dict[str, Any]]
     most_scanned_repos: list[dict[str, Any]]
     average_score: float
     error_rate: float
@@ -247,9 +444,47 @@ async def _get_current_user(request: Request) -> dict[str, Any] | None:
         return None
 
     token = auth_header[7:]
+    token_hash = _hash_session_token(token)
+    now_dt = datetime.now(UTC)
+    now = now_dt.isoformat()
     conn = _get_db()
     try:
-        row = conn.execute("SELECT * FROM users WHERE access_token = ?", (token,)).fetchone()
+        session = conn.execute(
+            "SELECT user_id, revoked, expires_at FROM sessions WHERE token_hash = ?",
+            (token_hash,),
+        ).fetchone()
+        if not session or session["revoked"]:
+            return None
+        expires_at_raw = session["expires_at"]
+        new_expires_at: str | None = None
+        if expires_at_raw:
+            try:
+                expires_at = datetime.fromisoformat(expires_at_raw)
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=UTC)
+            except ValueError:
+                expires_at = None
+            if expires_at is None:
+                # Malformed — treat as expired, force re-auth.
+                return None
+            if now_dt >= expires_at:
+                return None
+            if expires_at - now_dt < _SESSION_RENEW_WHEN_UNDER:
+                new_expires_at = (now_dt + _SESSION_TTL).isoformat()
+        if new_expires_at:
+            conn.execute(
+                "UPDATE sessions SET last_used_at = ?, expires_at = ? WHERE token_hash = ?",
+                (now, new_expires_at, token_hash),
+            )
+        else:
+            conn.execute(
+                "UPDATE sessions SET last_used_at = ? WHERE token_hash = ?",
+                (now, token_hash),
+            )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM users WHERE id = ?", (session["user_id"],)
+        ).fetchone()
         if row:
             return dict(row)
     finally:
@@ -268,7 +503,7 @@ async def _require_user(request: Request) -> dict[str, Any]:
 async def _require_admin(request: Request) -> dict[str, Any]:
     """Require admin user. Raises 403 if not admin."""
     user = await _require_user(request)
-    if user.get("username") != ADMIN_GITHUB_USERNAME:
+    if not ADMIN_GITHUB_USERNAME or user.get("username") != ADMIN_GITHUB_USERNAME:
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
 
@@ -368,7 +603,8 @@ async def _fetch_all_repos(token: str) -> list[dict[str, Any]]:
 
 
 @app.get("/api/auth/github")
-async def github_login() -> dict[str, str]:
+@limiter.limit("20/minute")
+async def github_login(request: Request) -> dict[str, str]:
     """Return the GitHub OAuth authorize URL."""
     if not GITHUB_CLIENT_ID:
         raise HTTPException(status_code=500, detail="GitHub OAuth not configured")
@@ -383,7 +619,8 @@ async def github_login() -> dict[str, str]:
 
 
 @app.get("/api/auth/callback")
-async def github_callback(code: str) -> dict[str, Any]:
+@limiter.limit("10/minute")
+async def github_callback(request: Request, code: str) -> dict[str, Any]:
     """Exchange GitHub OAuth code for access token and upsert user."""
     if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
         raise HTTPException(status_code=500, detail="GitHub OAuth not configured")
@@ -421,34 +658,54 @@ async def github_callback(code: str) -> dict[str, Any]:
 
         user_data = user_resp.json()
 
-    # Upsert user in database.
+    # Upsert user with encrypted token. Plaintext column is always NULL going forward.
+    encrypted_token = _encrypt_token(access_token)
+    now_dt = datetime.now(UTC)
+    now_iso = now_dt.isoformat()
+    expires_iso = (now_dt + _SESSION_TTL).isoformat()
+    session_token = secrets.token_urlsafe(32)
+    session_hash = _hash_session_token(session_token)
+
     conn = _get_db()
     try:
         conn.execute(
             """
-            INSERT INTO users (github_id, username, avatar_url, access_token, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO users (github_id, username, avatar_url,
+                               access_token, access_token_encrypted, created_at)
+            VALUES (?, ?, ?, NULL, ?, ?)
             ON CONFLICT(github_id) DO UPDATE SET
                 username = excluded.username,
                 avatar_url = excluded.avatar_url,
-                access_token = excluded.access_token
+                access_token = NULL,
+                access_token_encrypted = excluded.access_token_encrypted
             """,
             (
                 user_data["id"],
                 user_data["login"],
                 user_data.get("avatar_url", ""),
-                access_token,
+                encrypted_token,
                 time.time(),
             ),
         )
-        conn.commit()
-        row = conn.execute("SELECT * FROM users WHERE github_id = ?", (user_data["id"],)).fetchone()
+        row = conn.execute(
+            "SELECT id FROM users WHERE github_id = ?", (user_data["id"],)
+        ).fetchone()
         user_id = dict(row)["id"] if row else None
+        if user_id is None:
+            raise HTTPException(status_code=500, detail="Failed to persist user")
+        conn.execute(
+            """
+            INSERT INTO sessions (token_hash, user_id, created_at, last_used_at, expires_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (session_hash, user_id, now_iso, now_iso, expires_iso),
+        )
+        conn.commit()
     finally:
         conn.close()
 
     return {
-        "token": access_token,
+        "token": session_token,
         "user": {
             "id": user_id,
             "github_id": user_data["id"],
@@ -462,6 +719,13 @@ async def github_callback(code: str) -> dict[str, Any]:
 @app.get("/api/auth/me")
 async def get_me(user: dict[str, Any] = Depends(_require_user)) -> dict[str, Any]:
     """Return the current authenticated user."""
+    now = datetime.now(UTC).isoformat()
+    conn = _get_db()
+    try:
+        conn.execute("UPDATE users SET last_seen_at = ? WHERE id = ?", (now, user["id"]))
+        conn.commit()
+    finally:
+        conn.close()
     return {
         "id": user["id"],
         "github_id": user["github_id"],
@@ -469,6 +733,45 @@ async def get_me(user: dict[str, Any] = Depends(_require_user)) -> dict[str, Any
         "avatar_url": user["avatar_url"],
         "is_admin": user["username"] == ADMIN_GITHUB_USERNAME,
     }
+
+
+@app.post("/api/auth/logout")
+@limiter.limit("30/minute")
+async def logout(request: Request) -> dict[str, str]:
+    """Revoke the current session. Idempotent — returns ok even if no session."""
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token_hash = _hash_session_token(auth_header[7:])
+        conn = _get_db()
+        try:
+            conn.execute(
+                "UPDATE sessions SET revoked = 1 WHERE token_hash = ?",
+                (token_hash,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    return {"status": "ok"}
+
+
+@app.post("/api/auth/logout-all")
+@limiter.limit("5/minute")
+async def logout_all(
+    request: Request,
+    user: dict[str, Any] = Depends(_require_user),
+) -> dict[str, Any]:
+    """Revoke every session for the current user."""
+    conn = _get_db()
+    try:
+        cur = conn.execute(
+            "UPDATE sessions SET revoked = 1 WHERE user_id = ? AND revoked = 0",
+            (user["id"],),
+        )
+        conn.commit()
+        revoked = cur.rowcount
+    finally:
+        conn.close()
+    return {"status": "ok", "revoked_sessions": revoked}
 
 
 # --- API Routes: Repos ---
@@ -479,7 +782,7 @@ async def list_repos(
     user: dict[str, Any] = Depends(_require_user),
 ) -> list[dict[str, Any]]:
     """List all repos for the authenticated user."""
-    token = user["access_token"]
+    token = _gh_token_for(user)
     raw_repos = await _fetch_all_repos(token)
 
     return [
@@ -573,27 +876,28 @@ def _get_cached_free_scan(repo_url: str) -> dict | None:
 
 
 @app.post("/api/scan", response_model=ScanResponse)
+@limiter.limit("10/minute")
 async def create_scan(
-    request: ScanRequest,
+    request: Request,
+    payload: ScanRequest,
     background_tasks: BackgroundTasks,
-    req: Request,
 ) -> ScanResponse:
     """Accept a GitHub repo URL and start generating a CLAUDE.md."""
-    user = await _get_current_user(req)
+    user = await _get_current_user(request)
     user_id = user["id"] if user else None
-    token = user["access_token"] if user else None
+    token = _decrypt_token(user.get("access_token_encrypted")) if user else None
 
     # Return cached result for repeat free scans of the same repo
-    cached = _get_cached_free_scan(request.repo_url)
+    cached = _get_cached_free_scan(payload.repo_url)
     if cached:
         return ScanResponse(
             scan_id=cached["scan_id"],
-            repo_url=request.repo_url,
+            repo_url=payload.repo_url,
             status="complete",
             created_at="",
         )
 
-    scan_id = _make_scan_id(request.repo_url)
+    scan_id = _make_scan_id(payload.repo_url)
     now = datetime.now(UTC).isoformat()
 
     conn = _get_db()
@@ -603,17 +907,17 @@ async def create_scan(
             INSERT INTO scans (scan_id, repo_url, status, created_at, user_id)
             VALUES (?, ?, 'pending', ?, ?)
             """,
-            (scan_id, request.repo_url, now, user_id),
+            (scan_id, payload.repo_url, now, user_id),
         )
         conn.commit()
     finally:
         conn.close()
 
-    background_tasks.add_task(_run_scan, scan_id, request.repo_url, token)
+    background_tasks.add_task(_run_scan, scan_id, payload.repo_url, token)
 
     return ScanResponse(
         scan_id=scan_id,
-        repo_url=request.repo_url,
+        repo_url=payload.repo_url,
         status="pending",
         created_at=now,
     )
@@ -660,8 +964,10 @@ async def get_scan(scan_id: str) -> ScanResponse:
 
 
 @app.post("/api/scan-all")
+@limiter.limit("2/minute")
 async def scan_all(
-    request: ScanAllRequest,
+    request: Request,
+    payload: ScanAllRequest,
     background_tasks: BackgroundTasks,
     user: dict[str, Any] = Depends(_require_user),
 ) -> dict[str, Any]:
@@ -672,7 +978,7 @@ async def scan_all(
     """
     import json as _json
 
-    token = user["access_token"]
+    token = _gh_token_for(user)
     repos = await _fetch_all_repos(token)
 
     if not repos:
@@ -1527,13 +1833,17 @@ def _deep_scan_error(scan_id: str, error_msg: str) -> None:
 
 
 @app.post("/api/checkout/deep-scan", response_model=CheckoutResponse)
-async def create_deep_scan_checkout(request: CheckoutRequest) -> CheckoutResponse:
+@limiter.limit("5/minute")
+async def create_deep_scan_checkout(
+    request: Request,
+    payload: CheckoutRequest,
+) -> CheckoutResponse:
     """Create a Stripe Checkout session for a $19 deep scan."""
     if not STRIPE_SECRET_KEY:
         raise HTTPException(status_code=500, detail="Stripe not configured")
 
     # Pre-create the scan record so we have an ID for the success URL.
-    scan_id = _make_scan_id(request.repo_url)
+    scan_id = _make_scan_id(payload.repo_url)
     now = datetime.now(UTC).isoformat()
 
     conn = _get_db()
@@ -1543,7 +1853,7 @@ async def create_deep_scan_checkout(request: CheckoutRequest) -> CheckoutRespons
             INSERT INTO scans (scan_id, repo_url, status, created_at, scan_type, email)
             VALUES (?, ?, 'awaiting_payment', ?, 'deep', ?)
             """,
-            (scan_id, request.repo_url, now, request.email),
+            (scan_id, payload.repo_url, now, payload.email),
         )
         conn.commit()
     finally:
@@ -1569,12 +1879,12 @@ async def create_deep_scan_checkout(request: CheckoutRequest) -> CheckoutRespons
                 }
             ],
             mode="payment",
-            customer_email=request.email,
+            customer_email=payload.email,
             success_url=f"{SITE_URL}/?deep_scan={scan_id}",
             cancel_url=f"{SITE_URL}/",
             metadata={
                 "product": "deep_scan",
-                "repo_url": request.repo_url,
+                "repo_url": payload.repo_url,
                 "scan_id": scan_id,
             },
         )
@@ -1782,7 +2092,7 @@ async def push_pr(
     owner = parts[-2]
     repo = parts[-1].replace(".git", "")
 
-    token = user["access_token"]
+    token = _gh_token_for(user)
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
@@ -1891,6 +2201,9 @@ async def admin_metrics(
     user: dict[str, Any] = Depends(_require_admin),
 ) -> AdminMetrics:
     """Return admin dashboard metrics. Admin only."""
+    now = datetime.now(UTC)
+    day_ago = (now - timedelta(days=1)).isoformat()
+    week_ago = (now - timedelta(days=7)).isoformat()
     conn = _get_db()
     try:
         total = conn.execute("SELECT COUNT(*) FROM scans").fetchone()[0]
@@ -1898,6 +2211,30 @@ async def admin_metrics(
         unique_users = conn.execute(
             "SELECT COUNT(DISTINCT user_id) FROM scans WHERE user_id IS NOT NULL"
         ).fetchone()[0]
+
+        total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+
+        dau = conn.execute(
+            "SELECT COUNT(*) FROM users WHERE last_seen_at IS NOT NULL AND last_seen_at >= ?",
+            (day_ago,),
+        ).fetchone()[0]
+
+        wau = conn.execute(
+            "SELECT COUNT(*) FROM users WHERE last_seen_at IS NOT NULL AND last_seen_at >= ?",
+            (week_ago,),
+        ).fetchone()[0]
+
+        new_users_by_day = [
+            {"date": r[0], "count": r[1]}
+            for r in conn.execute(
+                """
+                SELECT DATE(created_at, 'unixepoch') as day, COUNT(*) as cnt
+                FROM users
+                WHERE created_at IS NOT NULL
+                GROUP BY day ORDER BY day DESC LIMIT 30
+                """
+            ).fetchall()
+        ]
 
         scans_by_day = [
             {"date": r[0], "count": r[1]}
@@ -1947,7 +2284,11 @@ async def admin_metrics(
     return AdminMetrics(
         total_scans=total,
         unique_users=unique_users,
+        total_users=total_users,
+        dau=dau,
+        wau=wau,
         scans_by_day=scans_by_day,
+        new_users_by_day=new_users_by_day,
         most_scanned_repos=most_scanned,
         average_score=avg_score,
         error_rate=error_rate,

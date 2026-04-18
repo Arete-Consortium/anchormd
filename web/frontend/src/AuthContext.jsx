@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { getStoredToken, getStoredUser, storeAuth, clearAuth, exchangeCode, getMe } from "./api";
+import { getStoredToken, getStoredUser, storeAuth, clearAuth, exchangeCode, getMe, logoutSession, logoutAllSessions } from "./api";
 
 const AuthContext = createContext(null);
 
@@ -41,12 +41,24 @@ export function AuthProvider({ children }) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const logout = useCallback(() => {
+    // Fire-and-forget server-side revoke; don't block UI on network.
+    logoutSession().catch(() => {});
+    clearAuth();
+    setUser(null);
+  }, []);
+
+  const logoutEverywhere = useCallback(async () => {
+    try {
+      await logoutAllSessions();
+    } catch (err) {
+      console.error("logout-all failed:", err);
+    }
     clearAuth();
     setUser(null);
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, logout }}>
+    <AuthContext.Provider value={{ user, loading, logout, logoutEverywhere }}>
       {children}
     </AuthContext.Provider>
   );
