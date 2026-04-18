@@ -876,7 +876,7 @@ def _get_cached_free_scan(repo_url: str) -> dict | None:
 
 
 @app.post("/api/scan", response_model=ScanResponse)
-@limiter.limit("10/minute")
+@limiter.limit("30/minute")
 async def create_scan(
     request: Request,
     payload: ScanRequest,
