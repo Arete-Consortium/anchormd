@@ -22,6 +22,7 @@ WORKDIR /app
 COPY --from=builder /install /usr/local
 
 COPY license_server/ ./license_server/
+RUN chmod +x /app/license_server/run.sh
 
 ENV PYTHONPATH="/app"
 ENV ANMD_DB_PATH="/data/license_server.db"
@@ -37,4 +38,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/v1/health || exit 1
 
 ENV PORT=8000
-CMD ["litestream", "replicate", "-config", "/app/license_server/litestream.yml", "-exec", "uvicorn license_server.main:app --host 0.0.0.0 --port 8000"]
+CMD ["/app/license_server/run.sh"]
