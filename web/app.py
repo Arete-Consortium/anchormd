@@ -872,6 +872,33 @@ def _get_cached_free_scan(repo_url: str) -> dict | None:
     return None
 
 
+_DEDUP_WINDOW_SECONDS = 30
+
+
+def _find_recent_inflight_scan(repo_url: str) -> dict | None:
+    """Return a pending or recently-errored free scan for the same repo.
+
+    Prevents the retry-storm pattern (observed in prod: 11 rows for one dead
+    URL in 10s). Window is 30s — after that, a retry is considered intentional.
+    """
+    cutoff = (datetime.now(UTC) - timedelta(seconds=_DEDUP_WINDOW_SECONDS)).isoformat()
+    conn = _get_db()
+    try:
+        row = conn.execute(
+            "SELECT scan_id, status, error, created_at FROM scans "
+            "WHERE repo_url = ? AND scan_type = 'free' "
+            "AND status IN ('pending', 'error') "
+            "AND created_at >= ? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (repo_url, cutoff),
+        ).fetchone()
+        if row:
+            return dict(row)
+    finally:
+        conn.close()
+    return None
+
+
 # --- API Routes: Scan ---
 
 
@@ -895,6 +922,21 @@ async def create_scan(
             repo_url=payload.repo_url,
             status="complete",
             created_at="",
+        )
+
+    # Dedup retry storms: if a pending or recently-errored scan exists for
+    # the same repo within the dedup window, return it instead of starting
+    # a duplicate job. A client hitting the same URL repeatedly — whether
+    # a user double-clicking or a script in a tight loop — gets the same
+    # scan_id back and can poll that one.
+    inflight = _find_recent_inflight_scan(payload.repo_url)
+    if inflight:
+        return ScanResponse(
+            scan_id=inflight["scan_id"],
+            repo_url=payload.repo_url,
+            status=inflight["status"],
+            error=inflight.get("error"),
+            created_at=inflight["created_at"],
         )
 
     scan_id = _make_scan_id(payload.repo_url)
