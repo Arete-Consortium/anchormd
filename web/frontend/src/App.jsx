@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import { useAuth } from "./AuthContext";
-import { getGitHubLoginUrl, createDeepScanCheckout, getDeepScanReport, getFixReport, pushPR, getCursorRules, getCopilotInstructions, getWindsurfRules } from "./api";
+import { getGitHubLoginUrl, createDeepScanCheckout, getDeepScanReport, getFixReport, pushPR, getCursorRules, getCopilotInstructions, getWindsurfRules, getAgentsMd, getCodexInstructions, getClaudeMd } from "./api";
 import ReposPage from "./ReposPage";
 import AdminPage from "./AdminPage";
 
@@ -39,7 +39,7 @@ function LoadingSpinner() {
         <div className="w-12 h-12 border-4 border-gray-700 border-t-anchor-500 rounded-full animate-spin" />
       </div>
       <div className="text-center">
-        <p className="text-gray-300 font-medium">Generating CLAUDE.md...</p>
+        <p className="text-gray-300 font-medium">Generating agent context...</p>
         <p className="text-gray-500 text-sm mt-1">
           Cloning repo, scanning codebase, analyzing patterns
         </p>
@@ -448,7 +448,7 @@ function DeepScanReportView({ report }) {
       {hygiene && !hygiene.error && hygiene.total_issues > 0 && (
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-4">
-            <h2 className="text-white text-xl font-semibold">CLAUDE.md Quality</h2>
+            <h2 className="text-white text-xl font-semibold">Context File Quality</h2>
             <GradeBadge grade={hygiene.grade} size="sm" />
             <span className="text-gray-400 text-sm">{hygiene.total_issues} issue{hygiene.total_issues !== 1 ? "s" : ""} found</span>
           </div>
@@ -524,11 +524,11 @@ function DeepScanReportView({ report }) {
         </div>
       )}
 
-      {/* Generated CLAUDE.md */}
+      {/* Generated context preview */}
       <div className="mb-4">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-white text-xl font-semibold">
-            Generated CLAUDE.md
+            Generated Agent Context
           </h2>
           <div className="flex items-center gap-2">
             <button
@@ -759,6 +759,12 @@ export default function App() {
     handleDownloadRulesFile(getCopilotInstructions, "copilot-instructions.md");
   const handleDownloadWindsurfRules = () =>
     handleDownloadRulesFile(getWindsurfRules, ".windsurfrules");
+  const handleDownloadAgentsMd = () =>
+    handleDownloadRulesFile(getAgentsMd, "AGENTS.md");
+  const handleDownloadCodexInstructions = () =>
+    handleDownloadRulesFile(getCodexInstructions, "AGENTS.md");
+  const handleDownloadClaudeMd = () =>
+    handleDownloadRulesFile(getClaudeMd, "CLAUDE.md");
 
   const handleLogin = async () => {
     try {
@@ -951,22 +957,27 @@ export default function App() {
               <div className="text-center pt-16 pb-10">
                 <h1 className="text-4xl sm:text-5xl font-bold text-white mb-4 tracking-tight">
                   GitHub URL in.{" "}
-                  <span className="text-anchor-400">CLAUDE.md</span> out.
+                  <span className="text-anchor-400">Agent context</span> out.
                 </h1>
                 <p className="text-gray-400 text-lg max-w-2xl mx-auto mb-4">
-                  Paste a public GitHub repo URL and get a production-ready AI
-                  agent context file in seconds.
+                  Paste a public GitHub repo URL and get production-ready
+                  instructions for every major AI coding agent &mdash; in
+                  seconds.
                   {!user && " Sign in to scan private repos."}
                 </p>
-                <div className="flex items-center justify-center gap-3 text-gray-500 text-sm">
-                  <span>Works with</span>
-                  <span className="text-gray-300 font-medium">Claude Code</span>
+                <div className="flex items-center justify-center gap-3 text-gray-500 text-sm flex-wrap">
+                  <span>One scan &rarr;</span>
+                  <span className="text-gray-300 font-medium">AGENTS.md</span>
                   <span>&middot;</span>
                   <span className="text-gray-300 font-medium">Cursor</span>
                   <span>&middot;</span>
                   <span className="text-gray-300 font-medium">Copilot</span>
                   <span>&middot;</span>
                   <span className="text-gray-300 font-medium">Windsurf</span>
+                  <span>&middot;</span>
+                  <span className="text-gray-300 font-medium">Codex</span>
+                  <span>&middot;</span>
+                  <span className="text-gray-300 font-medium">Claude Code</span>
                 </div>
               </div>
             )}
@@ -1030,7 +1041,7 @@ export default function App() {
                         )}
                     </span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <button
                       onClick={() => setShowRaw(!showRaw)}
                       className="text-gray-400 hover:text-gray-200 text-sm px-3 py-1.5
@@ -1044,6 +1055,20 @@ export default function App() {
                                  border border-gray-700 rounded-md transition-colors"
                     >
                       Share Link
+                    </button>
+                    <button
+                      onClick={handleDownloadClaudeMd}
+                      className="text-gray-400 hover:text-gray-200 text-sm px-3 py-1.5
+                                 border border-gray-700 rounded-md transition-colors"
+                    >
+                      CLAUDE.md
+                    </button>
+                    <button
+                      onClick={handleDownloadAgentsMd}
+                      className="text-gray-400 hover:text-gray-200 text-sm px-3 py-1.5
+                                 border border-gray-700 rounded-md transition-colors"
+                    >
+                      AGENTS.md
                     </button>
                     <button
                       onClick={handleDownloadCursorRules}
@@ -1065,6 +1090,13 @@ export default function App() {
                                  border border-gray-700 rounded-md transition-colors"
                     >
                       .windsurfrules
+                    </button>
+                    <button
+                      onClick={handleDownloadCodexInstructions}
+                      className="text-gray-400 hover:text-gray-200 text-sm px-3 py-1.5
+                                 border border-gray-700 rounded-md transition-colors"
+                    >
+                      Codex
                     </button>
                     {result.score < 100 && (
                       <button
@@ -1140,10 +1172,22 @@ export default function App() {
               <>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-8 pb-8">
                   <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
+                    <div className="text-anchor-400 text-2xl mb-3">&#128230;</div>
+                    <h3 className="text-white font-semibold mb-2">Every Agent, One Scan</h3>
+                    <p className="text-gray-400 text-sm">
+                      Exports{" "}
+                      <code className="text-anchor-300 text-xs">AGENTS.md</code>,{" "}
+                      <code className="text-anchor-300 text-xs">.cursorrules</code>,{" "}
+                      <code className="text-anchor-300 text-xs">copilot-instructions.md</code>,{" "}
+                      <code className="text-anchor-300 text-xs">.windsurfrules</code>,{" "}
+                      <code className="text-anchor-300 text-xs">CLAUDE.md</code>, and a Codex variant. Pick the format your team uses &mdash; or push them all via PR.
+                    </p>
+                  </div>
+                  <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
                     <div className="text-anchor-400 text-2xl mb-3">&#9889;</div>
                     <h3 className="text-white font-semibold mb-2">Instant Scan</h3>
                     <p className="text-gray-400 text-sm">
-                      Paste a URL, get a scored CLAUDE.md in 30 seconds. 8 analyzers
+                      Paste a URL, get a scored context file in 30 seconds. 8 analyzers
                       detect your actual code patterns, not templates.
                     </p>
                   </div>
@@ -1152,17 +1196,7 @@ export default function App() {
                     <h3 className="text-white font-semibold mb-2">Fix Report</h3>
                     <p className="text-gray-400 text-sm">
                       Score under 100? Download a fix report with gap analysis,
-                      copy-paste templates, and a Claude Code prompt to auto-fix.
-                    </p>
-                  </div>
-                  <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
-                    <div className="text-anchor-400 text-2xl mb-3">&#128230;</div>
-                    <h3 className="text-white font-semibold mb-2">Multi-Agent Export</h3>
-                    <p className="text-gray-400 text-sm">
-                      One scan, four formats: <code className="text-anchor-300 text-xs">CLAUDE.md</code>,{" "}
-                      <code className="text-anchor-300 text-xs">.cursorrules</code>,{" "}
-                      <code className="text-anchor-300 text-xs">copilot-instructions.md</code>,{" "}
-                      <code className="text-anchor-300 text-xs">.windsurfrules</code>. Or push a PR straight to your repo.
+                      copy-paste templates, and a ready-to-run agent prompt to auto-fix.
                     </p>
                   </div>
                 </div>
@@ -1185,7 +1219,7 @@ export default function App() {
                   </div>
                   <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
                     <div className="text-anchor-400 text-2xl mb-3">&#128187;</div>
-                    <h3 className="text-white font-semibold mb-2">CLI Too</h3>
+                    <h3 className="text-white font-semibold mb-2">Local CLI</h3>
                     <p className="text-gray-400 text-sm">
                       <code className="text-anchor-300 text-xs">pip install anchormd</code>
                       {" "}&mdash; run locally in any project directory.

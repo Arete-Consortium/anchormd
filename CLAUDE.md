@@ -63,8 +63,8 @@ anchormd/
 │   ├── app.py                   # FastAPI: POST /api/scan, GET /api/scan/{id}
 │   ├── generator.py             # Wrapper around anchormd generation logic
 │   ├── frontend/                # React + Vite + Tailwind (dark theme)
-│   ├── Dockerfile               # Multi-stage build (Node + Python)
-│   └── fly.toml                 # Fly.io config (anchormd-web)
+│   └── Dockerfile               # Multi-stage build (Node + Python)
+├── fly.web.toml                 # Fly.io config for anchormd-web (deploy from project root)
 ├── .dockerignore
 ├── pyproject.toml
 ```

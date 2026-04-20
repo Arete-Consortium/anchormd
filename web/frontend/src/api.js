@@ -132,3 +132,15 @@ export async function getCopilotInstructions(scanId) {
 export async function getWindsurfRules(scanId) {
   return apiGet(`/api/scan/${scanId}/windsurfrules`);
 }
+
+export async function getAgentsMd(scanId) {
+  return apiGet(`/api/scan/${scanId}/agents`);
+}
+
+export async function getCodexInstructions(scanId) {
+  return apiGet(`/api/scan/${scanId}/codex`);
+}
+
+export async function getClaudeMd(scanId) {
+  return apiGet(`/api/scan/${scanId}/claude-md`);
+}

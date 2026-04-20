@@ -6,6 +6,13 @@ primary_region = 'sjc'
 
 [env]
   PYTHONUNBUFFERED = "1"
+  ADMIN_GITHUB_USERNAME = "AreteDriver"
+  SITE_URL = "https://anchormd.dev"
+  ANCHORMD_DB_PATH = "/data/scans.db"
+
+[mounts]
+  source = "anchormd_data"
+  destination = "/data"
 
 [http_service]
   internal_port = 8000

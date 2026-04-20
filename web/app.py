@@ -2696,6 +2696,93 @@ async def get_windsurfrules(scan_id: str) -> dict[str, Any]:
     }
 
 
+def _load_scan_content(scan_id: str) -> tuple[str, str]:
+    """Fetch a completed scan's content + repo name, or raise HTTPException."""
+    conn = _get_db()
+    try:
+        row = conn.execute("SELECT * FROM scans WHERE scan_id = ?", (scan_id,)).fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    row_dict = dict(row)
+    if row_dict["status"] != "complete" or not row_dict.get("content"):
+        raise HTTPException(status_code=400, detail="Scan not complete")
+
+    repo_url = row_dict["repo_url"]
+    repo_name = repo_url.rstrip("/").split("/")[-1].replace(".git", "")
+    return row_dict["content"], repo_name
+
+
+@app.get("/api/scan/{scan_id}/agents")
+async def get_agents_md(scan_id: str) -> dict[str, Any]:
+    """Convert a scan result to the AGENTS.md cross-tool convention.
+
+    AGENTS.md is the shared convention adopted by Cursor, OpenAI Codex, and other
+    AI coding tools — a single tool-agnostic instructions file per repo.
+    """
+    import re
+
+    content, repo_name = _load_scan_content(scan_id)
+    content = re.sub(r"^# CLAUDE\.md — .+\n*", "", content)
+
+    agents_md = (
+        f"# AGENTS.md — {repo_name}\n\n"
+        "Instructions for AI coding agents working in this repository. "
+        "Tool-agnostic: applies to Cursor, OpenAI Codex, Claude Code, Copilot, "
+        "Windsurf, and any agent that honors AGENTS.md.\n\n"
+        + content.strip()
+        + "\n"
+    )
+
+    return {
+        "scan_id": scan_id,
+        "content": agents_md,
+        "filename": "AGENTS.md",
+    }
+
+
+@app.get("/api/scan/{scan_id}/codex")
+async def get_codex_instructions(scan_id: str) -> dict[str, Any]:
+    """Convert a scan result to an OpenAI Codex-flavored AGENTS.md.
+
+    Codex reads AGENTS.md natively; this variant adds a Codex-targeted preamble.
+    """
+    import re
+
+    content, repo_name = _load_scan_content(scan_id)
+    content = re.sub(r"^# CLAUDE\.md — .+\n*", "", content)
+
+    codex_md = (
+        f"# AGENTS.md — {repo_name}\n\n"
+        "You are OpenAI Codex operating on this repository. "
+        "Follow these instructions for every edit, completion, and task. "
+        "Prefer minimal diffs, stay within the conventions below, and run the "
+        "project's test and lint commands before reporting work complete.\n\n"
+        + content.strip()
+        + "\n"
+    )
+
+    return {
+        "scan_id": scan_id,
+        "content": codex_md,
+        "filename": "AGENTS.md",
+    }
+
+
+@app.get("/api/scan/{scan_id}/claude-md")
+async def get_claude_md(scan_id: str) -> dict[str, Any]:
+    """Return the raw generated CLAUDE.md for direct download."""
+    content, _repo_name = _load_scan_content(scan_id)
+    return {
+        "scan_id": scan_id,
+        "content": content,
+        "filename": "CLAUDE.md",
+    }
+
+
 @app.get("/api/health")
 async def health() -> dict[str, str]:
     """Health check."""
