@@ -44,6 +44,11 @@ dev = [
     "mypy>=1.0",
     "ruff>=0.1.0",
     "httpx>=0.27.0",
+    # License server runtime — needed so tests/license_server/ can be collected
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "slowapi>=0.1.9",
+    "stripe>=8.0.0",
 ]
 
 [project.scripts]
