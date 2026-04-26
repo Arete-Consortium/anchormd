@@ -13,11 +13,10 @@ Premium CLAUDE.md templates for domain-specific projects. Each pack includes a p
 
 ## What's in a Pack
 
-Each pack includes:
-- `CLAUDE.md` — Drop-in template with 15+ sections
-- `ANTI_PATTERNS.md` — 30+ framework-specific anti-patterns with explanations
-- `CONVENTIONS.md` — Naming, file structure, import ordering rules
-- `COMMANDS.md` — Development workflow commands reference
+Each pack currently includes:
+- `CLAUDE.md` — Drop-in template with framework-specific standards, commands, and anti-patterns
+
+Planned additions (not yet shipped in these directories): `ANTI_PATTERNS.md`, `CONVENTIONS.md`, `COMMANDS.md`.
 
 ## Listing on Gumroad
 

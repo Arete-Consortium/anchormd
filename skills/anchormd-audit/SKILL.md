@@ -1,7 +1,7 @@
 ---
 name: anchormd-audit
 description: Audit an existing CLAUDE.md file for quality, completeness, and accuracy. Use when reviewing a project's CLAUDE.md for staleness, when checking if a CLAUDE.md meets quality standards, when a CLAUDE.md might have drifted from the actual codebase, or when evaluating CLAUDE.md files across a fleet of repositories. Scores across 8 dimensions and reports specific issues with actionable fixes.
-license: MIT
+license: BSL-1.1
 ---
 
 # Audit CLAUDE.md

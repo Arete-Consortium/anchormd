@@ -352,6 +352,25 @@ class TestSkillsAnalyzer:
         assert "composite-scorer" in installed
         assert result.findings["installed_count"] == 2
 
+    def test_detects_installed_skills_from_codex_home(
+        self, tmp_project: Path, tmp_path: Path, monkeypatch
+    ) -> None:
+        codex_home = tmp_path / "codex-home"
+        skills_dir = codex_home / "skills"
+        skills_dir.mkdir(parents=True)
+        (skills_dir / "testing-specialist").mkdir()
+        (skills_dir / "testing-specialist" / "SKILL.md").write_text(
+            "---\nname: testing-specialist\n---"
+        )
+        monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+        structure, config = _scan(tmp_project)
+        result = SkillsAnalyzer().analyze(structure, config)
+        installed = result.findings["installed_skills"]
+
+        assert "testing-specialist" in installed
+        assert str(skills_dir) in result.findings["installed_skill_dirs"]
+
     def test_empty_skills_dir(self, tmp_project: Path, tmp_path: Path) -> None:
         skills_dir = tmp_path / "empty_skills"
         skills_dir.mkdir()
@@ -374,6 +393,15 @@ class TestSkillsAnalyzer:
         result = SkillsAnalyzer(skills_dir=tmp_path / "none").analyze(structure, config)
         assert "commands/deploy" in result.findings["project_skills"]
 
+    def test_detects_codex_project_skills(self, tmp_project: Path, tmp_path: Path) -> None:
+        codex_skill = tmp_project / ".codex" / "skills" / "planner"
+        codex_skill.mkdir(parents=True)
+        (codex_skill / "SKILL.md").write_text("---\nname: planner\n---")
+
+        structure, config = _scan(tmp_project)
+        result = SkillsAnalyzer(skills_dir=tmp_path / "none").analyze(structure, config)
+        assert "skills/planner" in result.findings["project_skills"]
+
     def test_recommends_bundles_for_fastapi(self, tmp_project: Path, tmp_path: Path) -> None:
         (tmp_project / "pyproject.toml").write_text('[project]\nname="test"\n[tool.ruff]\n')
         (tmp_project / "requirements.txt").write_text("fastapi\nuvicorn\n")
@@ -388,6 +416,18 @@ class TestSkillsAnalyzer:
         result = SkillsAnalyzer().analyze(structure, config)
         if result.section_content:
             assert "## AI Skills" in result.section_content
+
+    def test_section_content_includes_detected_skill_dir(
+        self, tmp_project: Path, tmp_path: Path
+    ) -> None:
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "code-reviewer").mkdir()
+        (skills_dir / "code-reviewer" / "SKILL.md").write_text("---\nname: code-reviewer\n---")
+
+        structure, config = _scan(tmp_project)
+        result = SkillsAnalyzer(skills_dir=skills_dir).analyze(structure, config)
+        assert str(skills_dir) in result.section_content
 
 
 class TestOpsecAnalyzer:
