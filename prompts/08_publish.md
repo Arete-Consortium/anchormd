@@ -17,14 +17,14 @@ Write a compelling README with:
 
 > Generate optimized CLAUDE.md files for AI coding agents in seconds.
 
-Stop hand-rolling CLAUDE.md. Let Forge analyze your codebase and generate 
-a production-grade configuration file that makes Claude Code, Cursor, 
+Stop hand-rolling CLAUDE.md. Let Forge analyze your codebase and generate
+a production-grade configuration file that makes Claude Code, Cursor,
 Windsurf, and Codex actually understand your project.
 
 ## Why?
 
-AI coding agents are only as good as the context you give them. A well-crafted 
-CLAUDE.md is the difference between an agent that writes idiomatic code and one 
+AI coding agents are only as good as the context you give them. A well-crafted
+CLAUDE.md is the difference between an agent that writes idiomatic code and one
 that fights your conventions on every change.
 
 AnchorMD:
@@ -90,7 +90,7 @@ Forge scores your CLAUDE.md on:
 
 ## License
 
-MIT
+BSL-1.1 (Business Source License 1.1)
 ```
 
 ### 2. GitHub Actions (`.github/workflows/ci.yml`)
@@ -134,7 +134,7 @@ jobs:
 
 ### 4. Final Checks
 
-- [ ] `LICENSE` file exists (MIT)
+- [ ] `LICENSE` file exists (BSL-1.1 with change license metadata)
 - [ ] `.gitignore` covers Python, node, IDE files
 - [ ] `pyproject.toml` metadata is complete for PyPI
 - [ ] All tests pass: `pytest tests/ -v`
@@ -159,13 +159,13 @@ mypy src/
 uv build
 
 # Test install from wheel
-pip install dist/anchormd-0.1.0-py3-none-any.whl
+pip install dist/anchormd-0.4.0-py3-none-any.whl
 anchormd --help
 anchormd generate /tmp/some-test-project
 
 # Tag and release
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.4.0
+git push origin v0.4.0
 # Create GitHub release → triggers publish workflow
 
 # Verify on PyPI
