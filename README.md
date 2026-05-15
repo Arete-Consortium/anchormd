@@ -4,7 +4,7 @@
 
 Stop hand-rolling CLAUDE.md. Let Forge analyze your codebase and generate
 a production-grade configuration file that makes Claude Code, Cursor,
-Windsurf, and Codex actually understand your project.
+Windsurf, Codex, and OpenCode actually understand your project.
 
 ## Why?
 
