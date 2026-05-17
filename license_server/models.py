@@ -179,3 +179,45 @@ class SeatListResponse(BaseModel):
     license_key_masked: str
     seats_total: int
     seats: list[SeatRecord] = Field(default_factory=list)
+
+
+# --- Audit log (Strict tier) ---
+
+
+class AuditLogRequest(BaseModel):
+    """Request body for POST /v1/audit/log — fire-and-forget client event."""
+
+    license_key: str
+    machine_id: str | None = None
+    event_type: str = "scan"
+    command: str
+    repo_fingerprint: str | None = None
+    product: str = "anchormd"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AuditLogResponse(BaseModel):
+    """Response for POST /v1/audit/log."""
+
+    logged: bool
+    event_id: int | None = None
+
+
+class AuditEvent(BaseModel):
+    """A single audit log row."""
+
+    id: int
+    license_key_masked: str
+    machine_id: str | None
+    event_type: str
+    command: str
+    repo_fingerprint: str | None
+    created_at: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AuditExportResponse(BaseModel):
+    """Response for GET /v1/audit/export when JSON requested."""
+
+    total: int
+    events: list[AuditEvent] = Field(default_factory=list)

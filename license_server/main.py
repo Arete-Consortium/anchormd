@@ -15,6 +15,8 @@ from license_server.database import close_connection, get_connection, run_migrat
 from license_server.models import ErrorResponse, HealthResponse
 from license_server.rate_limit import limiter
 from license_server.routes.activate import router as activate_router
+from license_server.routes.audit import prune_old_events
+from license_server.routes.audit import router as audit_router
 from license_server.routes.revoke import router as revoke_router
 from license_server.routes.seats import router as seats_router
 from license_server.routes.usage import router as usage_router
@@ -26,9 +28,11 @@ _db_path_override = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Run migrations on startup, close DB on shutdown."""
+    """Run migrations and prune old audit events on startup, close DB on shutdown."""
     conn = get_connection(_db_path_override)
     run_migrations(conn)
+    # Strict-tier audit log retention — 1 year (spec §Locked decisions #3).
+    prune_old_events(conn)
     yield
     close_connection()
 
@@ -47,6 +51,7 @@ app.include_router(revoke_router)
 app.include_router(validate_router)
 app.include_router(usage_router)
 app.include_router(seats_router)
+app.include_router(audit_router)
 app.include_router(webhook_router)
 
 
