@@ -21,27 +21,50 @@ Confirm the launch state before doing anything irreversible.
 ```bash
 cd ~/projects/anchormd
 
+# Make flyctl reachable (installed at ~/.fly/bin/flyctl, not in default PATH).
+export PATH="$HOME/.fly/bin:$PATH"
+
 # Confirm clean working tree, on main, in sync with origin.
 git status --short --branch
 # EXPECTED: "## main...origin/main" with no listed files
 # IF NOT: stash or commit local changes before continuing
 
-# Confirm last commit is Day 6 (or later)
-git log --oneline -1
-# EXPECTED: 5758f97 docs: launch surfaces for v0.6.0 — Day 6 of v0.6.0
+# Confirm last commit is at least Day 6 + runbook
+git log --oneline -2
+# EXPECTED: dad8844 docs(launch): Day 7 deploy runbook …
+#           5758f97 docs: launch surfaces for v0.6.0 — Day 6 of v0.6.0
 
 # Confirm test suite green
 .venv/bin/python -m pytest tests/ -q | tail -3
 # EXPECTED: 811 passed (or more if you added during prep)
 
-# Confirm version bump intent
+# Confirm version is still 0.5.0 in BOTH places (you'll bump them in Phase 6)
 grep '^version' pyproject.toml
-# EXPECTED: 0.5.0 (you will bump it in Phase 6)
+grep '__version__' src/anchormd/__init__.py
+# EXPECTED:
+#   version = "0.5.0"
+#   __version__ = "0.5.0"
 
-# Confirm Fly auth + project linked
+# Confirm Fly auth — REQUIRED, the access token expires periodically
 flyctl auth whoami
+# EXPECTED: your fly account email
+# IF "no access token available": run `flyctl auth login`, then retry
+
+# Confirm license server project is reachable
 flyctl status --config license_server/fly.toml
 # EXPECTED: machines healthy, latest deploy timestamp visible
+
+# Confirm PyPI credentials are ready for Phase 7
+# Modern PyPI requires an API token, NOT password auth.
+# Have these ready as env vars (do not commit them):
+#   TWINE_USERNAME=__token__
+#   TWINE_PASSWORD=pypi-AgEIcHlwaS5vcmcCJ...  (your pypi.org API token)
+# If you don't have a token: pypi.org → Account → API tokens → Add token
+# (scope to "anchormd" project only, not account-wide)
+
+# Confirm build + twine are installed in .venv (NOT default deps)
+.venv/bin/python -m build --version 2>/dev/null || .venv/bin/pip install build twine
+# EXPECTED: build N.N.N (CPython ...)
 ```
 
 If any of these fail: STOP. Fix it before proceeding.
@@ -78,12 +101,15 @@ v<N> deployed successfully
 curl -sS https://cmdf-license.fly.dev/v1/health | jq .
 # EXPECTED: {"status":"ok","version":"...","total_licenses":<N>,"active_licenses":<N>}
 
-# Verify migrations ran — query an existing key, confirm seats fields appear
+# Verify migrations ran — query one of YOUR OWN existing Pro license keys
+# (do NOT use the literal ANMD-XXXX-XXXX-XXXX placeholder — pull from
+# 1Password / your ~/.config/anchormd/license / your Stripe-receipt email)
+MY_KEY="ANMD-..."  # ← substitute your real Pro license key here
 curl -sS -X POST https://cmdf-license.fly.dev/v1/validate \
   -H "Content-Type: application/json" \
-  -d '{"license_key":"ANMD-XXXX-XXXX-XXXX"}' | jq .
-# EXPECTED: response includes seats_used and seats_total fields (null for legacy keys)
-# Use one of your own existing Pro license keys for the smoke test
+  -d "{\"license_key\":\"$MY_KEY\"}" | jq .
+# EXPECTED: response includes seats_used and seats_total fields
+#           (both null on legacy Pro keys — proves the schema migration ran)
 ```
 
 **ROLLBACK:**
@@ -186,11 +212,27 @@ gh run watch
 Once Vercel green:
 
 ```bash
-# Visit anchormd.dev/?page=strict in browser
+cd ~/projects/anchormd
+git push origin main
+# Vercel auto-deploys from main. Vercel deploys are NOT visible in `gh run` —
+# watch them at https://vercel.com/<your-team>/anchormd-web/deployments
+# or via the Vercel CLI: `vercel ls anchormd-web` if you have it linked.
+#
+# The Fly anchormd-web backend does NOT need to redeploy for this launch —
+# StrictPage / PricingPage are static frontend changes proxied by Vercel.
+```
+
+Once Vercel shows green for the latest commit:
+
+```bash
+# Visit anchormd.dev/?page=strict in browser (NOT localhost — you want
+# to exercise the real Vercel → Stripe → Fly path)
 # Click "Subscribe" on the Team-5 Annual card
 # Stripe checkout opens (test mode banner visible)
 # Use Stripe test card: 4242 4242 4242 4242, any future expiry, any CVC
-# Email: yourname+stripe-test@gmail.com
+# Email: yourname+stripe-test@gmail.com  (Gmail "+" alias trick — works for
+#        Gmail and many other providers. If yours doesn't support +, use a
+#        second mailbox.)
 # Complete checkout
 ```
 
@@ -242,7 +284,7 @@ curl -sS -H "Authorization: Bearer $ANMD_ADMIN_SECRET" \
 
 If ANY of these fail: **STOP. Do not proceed to live mode.** Debug, fix, redeploy, retest.
 
-**Refund the $0.50 test charge** (Stripe dashboard → Payments → find the test transaction → Refund). In test mode the money never actually moves, but make a habit of it for when you do live tests.
+**No refund needed for the $0.50 test charge.** Stripe test-mode "charges" never settle to real money. The test transaction sits in the Stripe dashboard with a "Test mode" banner. When you flip to live mode in Phase 5, the test products and test transactions remain visible but are clearly separated by the toggle in the Stripe UI. For your future actual launch reference: in *live* mode, you would refund a $0.50 smoke test via Payments → Refund.
 
 ---
 
@@ -280,8 +322,14 @@ cat /tmp/strict-live-urls.txt
 # Edit StrictPage.jsx and PricingPage.jsx with the LIVE buy.stripe.com URLs
 # (not test_XXXXX)
 
-# Bump version
-# Edit pyproject.toml: version = "0.5.0" → "0.6.0"
+# Bump version in BOTH places — pyproject.toml AND src/anchormd/__init__.py
+# Both must match or `anchormd --version` will lie about the wheel contents.
+sed -i 's/^version = "0.5.0"/version = "0.6.0"/' pyproject.toml
+sed -i 's/__version__ = "0.5.0"/__version__ = "0.6.0"/' src/anchormd/__init__.py
+# Verify both bumped
+grep '^version' pyproject.toml
+grep '__version__' src/anchormd/__init__.py
+# EXPECTED: both show 0.6.0
 
 # Verify build
 cd ~/projects/anchormd/web/frontend
@@ -291,15 +339,28 @@ cd ~/projects/anchormd
 # EXPECTED: 811 passed (no test changes from earlier)
 
 # Commit
-git add web/frontend/src/StrictPage.jsx web/frontend/src/PricingPage.jsx pyproject.toml
+git add web/frontend/src/StrictPage.jsx web/frontend/src/PricingPage.jsx \
+  pyproject.toml src/anchormd/__init__.py
 git commit -m "release: v0.6.0 — Strict tier live"
 
 git tag -a v0.6.0 -m "v0.6.0 — Strict tier"
 
+# Push main FIRST, then the tag — order matters because GitHub validates the
+# tag's commit exists on the branch.
 git push origin main
 git push origin v0.6.0
 
-# Vercel auto-deploys.
+# Vercel auto-deploys from the main push.
+```
+
+After pushing the tag, the draft release at
+<https://github.com/Arete-Consortium/anchormd/releases> automatically
+associates with tag `v0.6.0`. To publish:
+
+```bash
+gh release edit v0.6.0 --draft=false
+# OR via the web UI: open the release, click "Publish release"
+# (the button is direct — no Edit-then-Publish two-step needed)
 ```
 
 ---
@@ -309,32 +370,57 @@ git push origin v0.6.0
 ```bash
 cd ~/projects/anchormd
 
-# Clean any old build artifacts
-rm -rf dist/ build/ *.egg-info/
+# Clean any old build artifacts.
+# `rm` is aliased to a `trash` reminder in your shell, so use `trash` directly
+# (or invoke real rm via `\rm -rf`). Both work.
+trash dist build 2>/dev/null
+trash $(find . -maxdepth 2 -name "*.egg-info" -type d) 2>/dev/null
 
 # Build
 .venv/bin/python -m build
 # EXPECTED: dist/anchormd-0.6.0-py3-none-any.whl and dist/anchormd-0.6.0.tar.gz
+# IF "No module named 'build'": run `.venv/bin/pip install build twine` first
 
-# Verify the wheel installs cleanly in a fresh venv
+# Verify the wheel installs cleanly in a fresh venv (catches missing manifest
+# files, broken entry points, etc. BEFORE the upload makes them permanent)
 python -m venv /tmp/anchormd-verify
 /tmp/anchormd-verify/bin/pip install dist/anchormd-0.6.0-py3-none-any.whl
 /tmp/anchormd-verify/bin/anchormd --version
 # EXPECTED: anchormd 0.6.0
+# IF version reads 0.5.0: STOP — the __init__.py bump in Phase 6 didn't land.
+# Re-do Phase 6, rebuild, re-test.
 
-# Upload to PyPI
+# Upload to PyPI — credentials come from env vars set in Phase 0:
+#   TWINE_USERNAME=__token__
+#   TWINE_PASSWORD=pypi-...
 .venv/bin/twine upload dist/*
-# EXPECTED: Uploading 100% successfully
+# EXPECTED: "Uploading dist/anchormd-0.6.0-py3-none-any.whl"
+#           "Uploading dist/anchormd-0.6.0.tar.gz"
+#           "View at: https://pypi.org/project/anchormd/0.6.0/"
 ```
 
 **Verify PyPI:**
 
 ```bash
-# Wait ~60 seconds for PyPI CDN propagation
-pip install --upgrade anchormd
-anchormd --version
+# PyPI CDN propagation is usually 1-5 minutes. Don't panic if the first
+# `pip install` doesn't see it instantly.
+sleep 120
+pip index versions anchormd 2>&1 | head -3
+# EXPECTED: lists 0.6.0 (may need to wait longer if it doesn't appear)
+
+# Once visible, install in a fresh venv to confirm end-to-end:
+python -m venv /tmp/anchormd-pypi
+/tmp/anchormd-pypi/bin/pip install --upgrade anchormd
+/tmp/anchormd-pypi/bin/anchormd --version
 # EXPECTED: anchormd 0.6.0
 ```
+
+**If twine fails with `403 Invalid or non-existent authentication`:**
+- Token might be account-scoped instead of project-scoped — PyPI accepts both, but check the token is for "anchormd" or all projects.
+- Token might have been rotated. Generate a fresh one at pypi.org/manage/account/token/.
+
+**If twine fails with `400 Filename has already been used`:**
+- A previous partial upload of v0.6.0 succeeded. PyPI never allows re-uploading the same filename. Bump to v0.6.1, retag, and retry. (This is why the wheel-install verification step exists — to catch problems before uploading.)
 
 ---
 
@@ -388,13 +474,18 @@ If disputes appear:
 
 | Phase | Failure mode | Rollback |
 |---|---|---|
-| 1 | Migration failed | Roll back Fly release to previous SHA. Migrations are additive, so partial application is safe; full rollback restores prior schema. |
-| 2 | Stripe script crashed mid-run | Inspect Stripe dashboard for partially-created products; manually archive any orphans before retry. |
+| 0 | flyctl auth expired | `flyctl auth login`, then retry. |
+| 0 | `build` / `twine` missing | `.venv/bin/pip install build twine`. Note: NOT in dev deps because PyPI publishing is operator-only, not CI. |
+| 0 | PyPI token missing | Generate at pypi.org/manage/account/token/, set `TWINE_USERNAME=__token__` + `TWINE_PASSWORD=pypi-...`. |
+| 1 | Migration failed | Roll back Fly release to previous SHA. Migrations are additive (CREATE TABLE IF NOT EXISTS), so partial application is safe; full rollback restores prior schema. |
+| 2 | Stripe script crashed mid-run | Inspect Stripe dashboard for partially-created products; manually **archive** (not delete) any orphans before retry. Stripe products with any customer history cannot be deleted. |
 | 3 | Web build failed | Revert the StrictPage/PricingPage commit. Site stays on Day 6 state. |
-| 4 | Webhook test failed | Do not proceed to Phase 5. Fix the webhook handler, redeploy Fly, retry. |
+| 4 | Webhook test failed | Do not proceed to Phase 5. Fix the webhook handler, redeploy Fly, retry. Common: webhook signing secret stale after Fly env var rotation. |
 | 5 | Live Stripe script crashed | Same as Phase 2 rollback. Manually archive orphans. |
+| 6 | Version mismatch between pyproject.toml and __init__.py | Wheel-install in Phase 7 catches this. Fix the missed bump, re-commit, re-tag (delete + recreate the tag locally + force-push if not yet pushed). |
 | 6 | Version bump push failed | Investigate (likely CI failed on the release commit). Revert if necessary. |
-| 7 | PyPI upload failed | Investigate (rate limit, network, credential). Retry. If half-uploaded: yank with `twine yank anchormd==0.6.0`. |
+| 7 | PyPI upload failed (auth) | See troubleshooting block in Phase 7. |
+| 7 | PyPI upload failed (filename used) | Bump to v0.6.1, retag, retry. PyPI never allows re-uploading the same filename. |
 | 8 | Show HN post deleted by moderator | Wait 24 hours, repost with adjusted title. |
 
 ---
