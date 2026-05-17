@@ -51,6 +51,30 @@ def require_pro(feature: str) -> Callable[[F], F]:
     return decorator
 
 
+def require_strict(feature: str) -> Callable[[F], F]:
+    """Decorator that gates a CLI command behind Strict tier.
+
+    Free and Pro users get an upgrade prompt routed to anchormd.dev/strict.
+    Strict subscribers run the command normally.
+    """
+
+    def decorator(func: F) -> F:
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            if not has_feature(feature):
+                from anchormd.telemetry import track_strict_gate
+
+                track_strict_gate(feature)
+                console = Console()
+                console.print(f"[yellow]{get_upgrade_message(feature)}[/yellow]")
+                raise typer.Exit(1)
+            return func(*args, **kwargs)
+
+        return wrapper  # type: ignore[return-value]
+
+    return decorator
+
+
 def require_quota(scan_type: str = "deep_scan") -> Callable[[F], F]:
     """Decorator that checks scan quota before running a command.
 
@@ -127,19 +151,19 @@ def get_available_presets() -> dict[str, str]:
 
     for name in PRESET_PACKS:
         if name in PRO_PRESETS:
-            result[name] = "unlocked" if info.tier == Tier.PRO else "pro"
+            result[name] = "unlocked" if info.tier in (Tier.PRO, Tier.STRICT) else "pro"
         else:
             result[name] = "free"
 
     for name in FRAMEWORK_PRESETS:
         if name in PRO_PRESETS:
-            result[name] = "unlocked" if info.tier == Tier.PRO else "pro"
+            result[name] = "unlocked" if info.tier in (Tier.PRO, Tier.STRICT) else "pro"
         else:
             result[name] = "free"
 
     for name in PREMIUM_PRESETS:
         if name in PRO_PRESETS:
-            result[name] = "unlocked" if info.tier == Tier.PRO else "pro"
+            result[name] = "unlocked" if info.tier in (Tier.PRO, Tier.STRICT) else "pro"
         else:
             result[name] = "free"
 

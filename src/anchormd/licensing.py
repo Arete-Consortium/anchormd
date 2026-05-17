@@ -47,6 +47,11 @@ class Tier(StrEnum):
 
     FREE = "free"
     PRO = "pro"
+    STRICT = "strict"
+
+
+# Ordered hierarchy — index = elevation. Used by tier_at_least().
+_TIER_ORDER: tuple[Tier, ...] = (Tier.FREE, Tier.PRO, Tier.STRICT)
 
 
 class TierConfig(BaseModel):
@@ -97,17 +102,11 @@ TIER_DEFINITIONS: dict[Tier, TierConfig] = {
             "community_presets",
             "init_interactive",
             "diff",
-            "ci_integration",
             "premium_presets",
             "team_templates",
             "priority_updates",
             "drift_run",
             "drift_report",
-            "drift_generate",
-            "drift_llm_judge",
-            "drift_fix",
-            "drift_ci",
-            "drift_html_report",
             "tech_debt",
             "github_health",
             "opsec",
@@ -133,26 +132,91 @@ TIER_DEFINITIONS: dict[Tier, TierConfig] = {
             "mobile",
         ],
     ),
+    Tier.STRICT: TierConfig(
+        name="Strict",
+        price_label="$49/seat/mo · $399/yr team-5 · $1,490/yr team-25",
+        features=[
+            # Inherits all Pro features
+            "generate",
+            "audit",
+            "presets",
+            "frameworks",
+            "community_presets",
+            "init_interactive",
+            "diff",
+            "premium_presets",
+            "team_templates",
+            "priority_updates",
+            "drift_run",
+            "drift_report",
+            "tech_debt",
+            "github_health",
+            "opsec",
+            "cleanup",
+            # Strict-only features
+            "strict_validation",
+            "ci_integration",
+            "drift_generate",
+            "drift_llm_judge",
+            "drift_fix",
+            "drift_ci",
+            "drift_html_report",
+            "fleet_json",
+            "audit_log",
+            "team_seats",
+        ],
+        preset_access=[
+            # Strict inherits all Pro presets
+            "default",
+            "minimal",
+            "full",
+            "monorepo",
+            "library",
+            "python-fastapi",
+            "python-cli",
+            "django",
+            "react-typescript",
+            "nextjs",
+            "rust",
+            "go",
+            "node-express",
+            "react-native",
+            "data-science",
+            "devops",
+            "mobile",
+        ],
+    ),
 }
 
-# Features that require Pro.
+# Features that require Pro (or higher).
 PRO_FEATURES: frozenset[str] = frozenset(
     {
         "init_interactive",
         "diff",
-        "ci_integration",
         "premium_presets",
         "team_templates",
         "priority_updates",
+        "tech_debt",
+        "github_health",
+        "opsec",
+        "cleanup",
+    }
+)
+
+# Features that require Strict.
+# These were Pro features in v0.5.x — moved to Strict at v0.6.0 (no grandfather).
+STRICT_FEATURES: frozenset[str] = frozenset(
+    {
+        "strict_validation",
+        "ci_integration",
         "drift_generate",
         "drift_llm_judge",
         "drift_fix",
         "drift_ci",
         "drift_html_report",
-        "tech_debt",
-        "github_health",
-        "opsec",
-        "cleanup",
+        "fleet_json",
+        "audit_log",
+        "team_seats",
     }
 )
 
@@ -299,7 +363,13 @@ def _validate_with_server(key: str) -> LicenseInfo | None:
             return None
 
         data = resp.json()
-        tier = Tier.PRO if data.get("valid") else Tier.FREE
+        # Server may return explicit "tier": "strict"|"pro"|"free".
+        # Fallback: valid → Pro (legacy server behavior), invalid → Free.
+        server_tier = data.get("tier")
+        if server_tier in {t.value for t in Tier}:
+            tier = Tier(server_tier)
+        else:
+            tier = Tier.PRO if data.get("valid") else Tier.FREE
         return LicenseInfo(
             tier=tier,
             license_key=key,
@@ -458,12 +528,41 @@ def is_known_preset(preset_name: str) -> bool:
 
 
 def is_pro() -> bool:
-    """Check if the current license is Pro tier."""
+    """Check if the current license is exactly Pro tier.
+
+    Note: returns False for Strict. Use tier_at_least(Tier.PRO) when you mean
+    "Pro OR Strict" (the common case for feature display).
+    """
     return get_license_info().tier == Tier.PRO
 
 
+def is_strict() -> bool:
+    """Check if the current license is Strict tier."""
+    return get_license_info().tier == Tier.STRICT
+
+
+def tier_at_least(minimum: Tier) -> bool:
+    """Check if the current tier is at or above `minimum`.
+
+    Strict > Pro > Free. Use this for feature display where Strict should
+    inherit Pro's visual treatment ("Unlocked", premium presets enabled, etc.).
+    """
+    info = get_license_info()
+    return _TIER_ORDER.index(info.tier) >= _TIER_ORDER.index(minimum)
+
+
 def get_upgrade_message(feature: str) -> str:
-    """Return a user-facing upgrade prompt for a gated feature."""
+    """Return a user-facing upgrade prompt for a gated feature.
+
+    Routes to Strict messaging for Strict-only features, Pro messaging otherwise.
+    """
+    if feature in STRICT_FEATURES:
+        strict_config = TIER_DEFINITIONS[Tier.STRICT]
+        return (
+            f"'{feature}' requires AnchorMD Strict ({strict_config.price_label}).\n"
+            f"Upgrade at: https://anchormd.dev/strict\n"
+            f"Set your key via: export {_ENV_LICENSE_KEY}=ANMD-XXXX-XXXX-XXXX"
+        )
     pro_config = TIER_DEFINITIONS[Tier.PRO]
     return (
         f"'{feature}' requires AnchorMD Pro ({pro_config.price_label}).\n"

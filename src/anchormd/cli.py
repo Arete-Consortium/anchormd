@@ -349,6 +349,17 @@ def fleet(
     from anchormd.analyzers.reality import verify as run_verify
     from anchormd.generators.auditor import ClaudeMdAuditor
 
+    # --json output is a Strict-only feature (audit-log + machine-readable export).
+    if output_json:
+        from anchormd.licensing import get_upgrade_message, has_feature
+
+        if not has_feature("fleet_json"):
+            from anchormd.telemetry import track_strict_gate
+
+            track_strict_gate("fleet_json")
+            console.print(f"[yellow]{get_upgrade_message('fleet_json')}[/yellow]")
+            raise typer.Exit(1)
+
     root = root.resolve()
     if not root.is_dir():
         msg = f"{root} is not a directory"
