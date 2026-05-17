@@ -23,7 +23,12 @@ import httpx
 
 from license_server.config import get_aicards_mint_api
 from license_server.database import get_connection
-from license_server.email_delivery import send_aicards_email, send_bundle_email, send_license_email
+from license_server.email_delivery import (
+    send_aicards_email,
+    send_bundle_email,
+    send_license_email,
+    send_strict_license_email,
+)
 from license_server.key_gen import generate_key, hash_key, mask_key, validate_key_checksum
 
 logger = logging.getLogger(__name__)
@@ -48,8 +53,13 @@ def _create_license(
     subscription_id: str | None,
     event_id: str | None,
     bundle_id: str | None = None,
+    seats: int | None = None,
 ) -> tuple[str, str, str]:
-    """Create a single license record. Returns (key, masked, license_id)."""
+    """Create a single license record. Returns (key, masked, license_id).
+
+    When seats is provided, embeds {seats: N} in license metadata for use by
+    the seats endpoint (Strict-tier team licensing).
+    """
     key = generate_key(product)
     if not validate_key_checksum(key, product):
         logger.error("Generated key failed checksum for %s", product)
@@ -58,6 +68,10 @@ def _create_license(
     key_h = hash_key(key)
     masked = mask_key(key)
     license_id = str(uuid.uuid4())
+
+    metadata: dict[str, object] = {"source": "stripe_checkout", "event_id": event_id}
+    if seats is not None:
+        metadata["seats"] = seats
 
     conn.execute(
         "INSERT INTO licenses "
@@ -74,7 +88,7 @@ def _create_license(
             customer_id,
             subscription_id,
             bundle_id,
-            json.dumps({"source": "stripe_checkout", "event_id": event_id}),
+            json.dumps(metadata),
         ),
     )
 
@@ -158,7 +172,34 @@ def handle_checkout_completed(event: dict) -> dict:
             "stripe_subscription_id": subscription_id,
         }
 
-    # Single product (existing behavior)
+    # Strict tier: read seat count from metadata, send Strict welcome.
+    if tier == "strict":
+        seats = _parse_seats(metadata, session)
+        key, masked, _lid = _create_license(
+            conn,
+            product,
+            tier,
+            customer_email,
+            customer_id,
+            subscription_id,
+            event.get("id"),
+            seats=seats,
+        )
+        conn.commit()
+
+        send_strict_license_email(customer_email, key, seats)
+
+        return {
+            "license_key_masked": masked,
+            "email": customer_email,
+            "product": product,
+            "tier": tier,
+            "seats": seats,
+            "stripe_customer_id": customer_id,
+            "stripe_subscription_id": subscription_id,
+        }
+
+    # Single product (existing Pro behavior)
     key, masked, _lid = _create_license(
         conn,
         product,
@@ -181,6 +222,36 @@ def handle_checkout_completed(event: dict) -> dict:
         "stripe_customer_id": customer_id,
         "stripe_subscription_id": subscription_id,
     }
+
+
+def _parse_seats(metadata: dict, session: dict) -> int:
+    """Determine seat count for a Strict checkout.
+
+    Priority:
+    1. metadata.seats (explicit, set by Payment Link or admin)
+    2. The total quantity across the session's line_items (when buyer
+       adjusts the seat slider on the Stripe Payment Link)
+    3. Default = 1
+    """
+    raw = metadata.get("seats")
+    if raw is not None:
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            pass
+
+    line_items = session.get("line_items") or {}
+    data = line_items.get("data") or [] if isinstance(line_items, dict) else line_items
+    total_qty = 0
+    for item in data:
+        try:
+            total_qty += int(item.get("quantity", 0))
+        except (TypeError, ValueError):
+            continue
+    if total_qty > 0:
+        return total_qty
+
+    return 1
 
 
 def _handle_aicards_pack(

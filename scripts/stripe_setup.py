@@ -12,10 +12,13 @@ Usage:
 Creates:
     - Product: "AnchorMD Pro" ($8/mo or $69/yr)
     - Product: "Arete Dev Tools Bundle" ($29/mo or $199/yr)
-    - Payment Links for all 4 (printed to stdout)
+    - Product: "AnchorMD Strict" — Seat Monthly ($49/seat/mo), Team-5 ($399/yr),
+      Team-25 ($1,490/yr)
+    - Payment Links for all 7 (printed to stdout)
 
-IMPORTANT: Payment link metadata.product is read by the webhook at
-POST /v1/webhooks/stripe to determine which license key(s) to generate.
+IMPORTANT: Payment link metadata is read by the webhook at
+POST /v1/webhooks/stripe — metadata.product routes the license generation,
+metadata.tier sets the tier, metadata.seats (Strict only) sets the seat cap.
 """
 
 import argparse
@@ -32,12 +35,8 @@ BUNDLE_PRODUCTS = "anchormd,agent-lint,ai-spend,promptctl,context-hygiene,auditc
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Set up Stripe for AnchorMD Pro + Bundle"
-    )
-    parser.add_argument(
-        "--live", action="store_true", help="Confirm live mode (not test)"
-    )
+    parser = argparse.ArgumentParser(description="Set up Stripe for AnchorMD Pro + Bundle")
+    parser.add_argument("--live", action="store_true", help="Confirm live mode (not test)")
     args = parser.parse_args()
 
     key = os.environ.get("STRIPE_SECRET_KEY")
@@ -140,15 +139,87 @@ def main() -> None:
     )
     print(f"  Yearly link:  {bundle_yearly_link.url}")  # noqa: T201
 
+    # ── AnchorMD Strict (CI/team tier) ─────────────────────────
+
+    strict_product = stripe.Product.create(
+        name="AnchorMD Strict",
+        description=(
+            "Fail-closed license validation, team seats, and audit log for CI "
+            "and procurement environments. Includes everything in Pro plus "
+            "CI integration and full drift detection."
+        ),
+        metadata={"product": "anchormd", "tier": "strict"},
+    )
+    print(f"\nStrict Product: {strict_product.id}")  # noqa: T201
+
+    strict_seat_monthly = stripe.Price.create(
+        product=strict_product.id,
+        unit_amount=4900,  # $49.00 per seat
+        currency="usd",
+        recurring={"interval": "month"},
+    )
+    print(f"  Seat Monthly price: {strict_seat_monthly.id} ($49/seat/mo)")  # noqa: T201
+
+    strict_team5_annual = stripe.Price.create(
+        product=strict_product.id,
+        unit_amount=39900,  # $399.00
+        currency="usd",
+        recurring={"interval": "year"},
+        nickname="Strict Team-5 Annual",
+    )
+    print(f"  Team-5 Annual price: {strict_team5_annual.id} ($399/yr)")  # noqa: T201
+
+    strict_team25_annual = stripe.Price.create(
+        product=strict_product.id,
+        unit_amount=149000,  # $1,490.00
+        currency="usd",
+        recurring={"interval": "year"},
+        nickname="Strict Team-25 Annual",
+    )
+    print(f"  Team-25 Annual price: {strict_team25_annual.id} ($1,490/yr)")  # noqa: T201
+
+    # Strict seat-monthly: each unit = 1 seat. Quantity at checkout sets seat count.
+    # Webhook reads metadata.seats from the payment link.
+    strict_seat_monthly_link = stripe.PaymentLink.create(
+        line_items=[
+            {
+                "price": strict_seat_monthly.id,
+                "quantity": 1,
+                "adjustable_quantity": {
+                    "enabled": True,
+                    "minimum": 1,
+                    "maximum": 100,
+                },
+            }
+        ],
+        metadata={"product": "anchormd", "tier": "strict", "seats": "1"},
+    )
+    print(f"  Seat Monthly link: {strict_seat_monthly_link.url}")  # noqa: T201
+
+    strict_team5_link = stripe.PaymentLink.create(
+        line_items=[{"price": strict_team5_annual.id, "quantity": 1}],
+        metadata={"product": "anchormd", "tier": "strict", "seats": "5"},
+    )
+    print(f"  Team-5 link: {strict_team5_link.url}")  # noqa: T201
+
+    strict_team25_link = stripe.PaymentLink.create(
+        line_items=[{"price": strict_team25_annual.id, "quantity": 1}],
+        metadata={"product": "anchormd", "tier": "strict", "seats": "25"},
+    )
+    print(f"  Team-25 link: {strict_team25_link.url}")  # noqa: T201
+
     # ── Summary ────────────────────────────────────────────────
 
     print("\n── Payment Links ──")  # noqa: T201
-    print(f"AnchorMD Pro Monthly:  {monthly_link.url}")  # noqa: T201
-    print(f"AnchorMD Pro Yearly:   {yearly_link.url}")  # noqa: T201
-    print(f"Bundle Monthly ($29):  {bundle_monthly_link.url}")  # noqa: T201
-    print(f"Bundle Yearly ($199):  {bundle_yearly_link.url}")  # noqa: T201
+    print(f"AnchorMD Pro Monthly:    {monthly_link.url}")  # noqa: T201
+    print(f"AnchorMD Pro Yearly:     {yearly_link.url}")  # noqa: T201
+    print(f"Bundle Monthly ($29):    {bundle_monthly_link.url}")  # noqa: T201
+    print(f"Bundle Yearly ($199):    {bundle_yearly_link.url}")  # noqa: T201
+    print(f"Strict Seat Monthly:     {strict_seat_monthly_link.url}")  # noqa: T201
+    print(f"Strict Team-5 Annual:    {strict_team5_link.url}")  # noqa: T201
+    print(f"Strict Team-25 Annual:   {strict_team25_link.url}")  # noqa: T201
     print(  # noqa: T201
-        "\nWebhook reads metadata.product to route key generation."
+        "\nWebhook reads metadata.product + metadata.tier + metadata.seats."
         "\nEnsure webhook is configured at: "
         "https://cmdf-license.fly.dev/v1/webhooks/stripe"
     )

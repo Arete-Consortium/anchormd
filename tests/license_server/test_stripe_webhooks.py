@@ -37,6 +37,9 @@ def _patch_email(monkeypatch):
     """Stub out email delivery."""
     monkeypatch.setattr("license_server.stripe_webhooks.send_license_email", lambda *a, **kw: True)
     monkeypatch.setattr("license_server.stripe_webhooks.send_bundle_email", lambda *a, **kw: True)
+    monkeypatch.setattr(
+        "license_server.stripe_webhooks.send_strict_license_email", lambda *a, **kw: True
+    )
 
 
 def _checkout_event(
@@ -316,3 +319,112 @@ class TestBundleCheckout:
             ("bundle@example.com",),
         ).fetchone()[0]
         assert active == 0
+
+
+def _strict_checkout_event(
+    *,
+    email: str = "team@example.com",
+    seats: str | None = "5",
+    quantity: int | None = None,
+    customer_id: str = "cus_strict",
+    subscription_id: str = "sub_strict",
+    event_id: str = "evt_strict",
+) -> dict:
+    """Build a checkout.session.completed for a Strict purchase.
+
+    seats: metadata.seats string (None to omit and rely on line_item quantity).
+    quantity: when set, builds a line_items array with this quantity.
+    """
+    metadata: dict[str, str] = {"product": "anchormd", "tier": "strict"}
+    if seats is not None:
+        metadata["seats"] = seats
+
+    session: dict[str, object] = {
+        "customer_details": {"email": email},
+        "customer": customer_id,
+        "subscription": subscription_id,
+        "metadata": metadata,
+    }
+    if quantity is not None:
+        session["line_items"] = {"data": [{"quantity": quantity}]}
+
+    return {
+        "id": event_id,
+        "type": "checkout.session.completed",
+        "data": {"object": session},
+    }
+
+
+class TestCheckoutStrict:
+    """Tests for the Strict tier checkout path (Day 4 of v0.6.0)."""
+
+    def test_strict_seat_monthly_creates_license_with_1_seat(self, db):
+        """Default seat-monthly link carries metadata.seats=1."""
+        result = handle_checkout_completed(_strict_checkout_event(seats="1"))
+        assert result["tier"] == "strict"
+        assert result["seats"] == 1
+
+        row = db.execute(
+            "SELECT tier, metadata FROM licenses WHERE email = ?",
+            ("team@example.com",),
+        ).fetchone()
+        assert row["tier"] == "strict"
+        meta = json.loads(row["metadata"])
+        assert meta["seats"] == 1
+
+    def test_strict_team_5_creates_license_with_5_seats(self, db):
+        result = handle_checkout_completed(_strict_checkout_event(seats="5"))
+        assert result["seats"] == 5
+
+        row = db.execute(
+            "SELECT metadata FROM licenses WHERE email = ?",
+            ("team@example.com",),
+        ).fetchone()
+        meta = json.loads(row["metadata"])
+        assert meta["seats"] == 5
+
+    def test_strict_team_25_creates_license_with_25_seats(self, db):
+        result = handle_checkout_completed(_strict_checkout_event(seats="25"))
+        assert result["seats"] == 25
+
+        row = db.execute(
+            "SELECT metadata FROM licenses WHERE email = ?",
+            ("team@example.com",),
+        ).fetchone()
+        meta = json.loads(row["metadata"])
+        assert meta["seats"] == 25
+
+    def test_strict_falls_back_to_line_item_quantity(self, db):
+        """When metadata.seats is absent, derive from buyer's quantity slider."""
+        result = handle_checkout_completed(_strict_checkout_event(seats=None, quantity=8))
+        assert result["seats"] == 8
+
+        row = db.execute(
+            "SELECT metadata FROM licenses WHERE email = ?",
+            ("team@example.com",),
+        ).fetchone()
+        meta = json.loads(row["metadata"])
+        assert meta["seats"] == 8
+
+    def test_strict_sends_strict_email_not_standard(self, db, monkeypatch):
+        """Strict checkout fires send_strict_license_email, never send_license_email."""
+        strict_calls = []
+        standard_calls = []
+        monkeypatch.setattr(
+            "license_server.stripe_webhooks.send_strict_license_email",
+            lambda *a, **kw: strict_calls.append(a) or True,
+        )
+        monkeypatch.setattr(
+            "license_server.stripe_webhooks.send_license_email",
+            lambda *a, **kw: standard_calls.append(a) or True,
+        )
+
+        handle_checkout_completed(_strict_checkout_event(seats="5"))
+
+        assert len(strict_calls) == 1
+        assert len(standard_calls) == 0
+        # send_strict_license_email signature: (email, key, seats)
+        email_arg, key_arg, seats_arg = strict_calls[0]
+        assert email_arg == "team@example.com"
+        assert key_arg.startswith("ANMD-")
+        assert seats_arg == 5
