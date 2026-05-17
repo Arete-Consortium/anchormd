@@ -31,12 +31,12 @@ _db_path_override = None  # Set in tests to override get_connection
 # Tier limits per scan type per billing period
 TIER_LIMITS: dict[str, dict[str, int]] = {
     "free": {
-        "audit": 1,       # 1 per repo (enforced by repo_fingerprint uniqueness)
-        "deep_scan": 0,    # no deep scans
+        "audit": 1,  # 1 per repo (enforced by repo_fingerprint uniqueness)
+        "deep_scan": 0,  # no deep scans
     },
     "pro": {
-        "audit": -1,       # unlimited (-1)
-        "deep_scan": 10,   # 10 per month
+        "audit": -1,  # unlimited (-1)
+        "deep_scan": 10,  # 10 per month
     },
 }
 
@@ -88,16 +88,13 @@ def _get_usage_count(
         ).fetchone()
     else:
         row = conn.execute(
-            "SELECT COUNT(*) FROM scan_usage "
-            "WHERE license_id = ? AND scan_type = ? AND period = ?",
+            "SELECT COUNT(*) FROM scan_usage WHERE license_id = ? AND scan_type = ? AND period = ?",
             (license_id, scan_type, period),
         ).fetchone()
     return row[0] if row else 0
 
 
-def _check_quota(
-    tier: str, scan_type: str, used: int
-) -> tuple[int, int, bool]:
+def _check_quota(tier: str, scan_type: str, used: int) -> tuple[int, int, bool]:
     """Return (limit, remaining, allowed) for a tier + scan type."""
     limits = TIER_LIMITS.get(tier, TIER_LIMITS["free"])
     limit = limits.get(scan_type, 0)

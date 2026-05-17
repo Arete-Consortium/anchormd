@@ -71,6 +71,9 @@ class ValidateResponse(BaseModel):
     email: str | None = None
     expires_at: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Seat info — populated for Strict licenses; None on legacy/Pro keys.
+    seats_used: int | None = None
+    seats_total: int | None = None
 
 
 class RevokeRequest(BaseModel):
@@ -123,3 +126,56 @@ class ErrorResponse(BaseModel):
 
     error: str
     detail: str | None = None
+
+
+# --- Seats (Strict tier) ---
+
+
+class SeatClaimRequest(BaseModel):
+    """Request body for POST /v1/seats/claim."""
+
+    license_key: str
+    machine_id: str
+    product: str = "anchormd"
+
+
+class SeatClaimResponse(BaseModel):
+    """Response for POST /v1/seats/claim."""
+
+    claimed: bool
+    seats_used: int
+    seats_total: int
+    machine_id: str
+    license_key_masked: str | None = None
+
+
+class SeatReleaseRequest(BaseModel):
+    """Request body for POST /v1/seats/release."""
+
+    license_key: str
+    machine_id: str
+    product: str = "anchormd"
+
+
+class SeatReleaseResponse(BaseModel):
+    """Response for POST /v1/seats/release."""
+
+    released: bool
+    seats_used: int
+    seats_total: int
+
+
+class SeatRecord(BaseModel):
+    """A single seat row."""
+
+    machine_id: str
+    claimed_at: str
+    last_seen_at: str
+
+
+class SeatListResponse(BaseModel):
+    """Response for GET /v1/seats/list — admin only."""
+
+    license_key_masked: str
+    seats_total: int
+    seats: list[SeatRecord] = Field(default_factory=list)

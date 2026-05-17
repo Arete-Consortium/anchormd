@@ -152,9 +152,7 @@ def send_aicards_email(
             card_lines.append(f"    {rarity:10s}  {name}")
         body = (
             f"Your {pack_label} pack ({len(cards)} cards) has been minted on Sui!\n\n"
-            "Cards received:\n"
-            + "\n".join(card_lines)
-            + "\n\n"
+            "Cards received:\n" + "\n".join(card_lines) + "\n\n"
             "View your collection at https://aicards.fun\n\n"
             "— AI Cards TCG"
         )

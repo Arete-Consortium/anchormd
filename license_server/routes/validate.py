@@ -66,18 +66,14 @@ def validate(req: ValidateRequest, request: Request) -> ValidateResponse:
         product_aliases.append("anchormd")
 
     # Format check — try the requested product, then its alias.
-    format_ok = any(
-        validate_key_format(req.license_key, p) for p in product_aliases
-    )
+    format_ok = any(validate_key_format(req.license_key, p) for p in product_aliases)
     if not format_ok:
         key_h = hash_key(req.license_key)
         _log_validation(conn, key_h, req.machine_id, "invalid_format", client_ip)
         return ValidateResponse(valid=False, tier="free", product=req.product)
 
     # Checksum check — try both salts.
-    checksum_ok = any(
-        validate_key_checksum(req.license_key, p) for p in product_aliases
-    )
+    checksum_ok = any(validate_key_checksum(req.license_key, p) for p in product_aliases)
     if not checksum_ok:
         key_h = hash_key(req.license_key)
         _log_validation(conn, key_h, req.machine_id, "invalid_checksum", client_ip)
@@ -130,6 +126,17 @@ def validate(req: ValidateRequest, request: Request) -> ValidateResponse:
         with contextlib.suppress(json.JSONDecodeError, TypeError):
             metadata = json.loads(row["metadata"])
 
+    # Seat info — Strict-tier licenses carry a seats count in metadata.
+    seats_total: int | None = None
+    seats_used: int | None = None
+    raw_seats = metadata.get("seats")
+    if raw_seats is not None:
+        with contextlib.suppress(TypeError, ValueError):
+            seats_total = max(1, int(raw_seats))
+            seats_used = conn.execute(
+                "SELECT COUNT(*) FROM seats WHERE license_id = ?", (row["id"],)
+            ).fetchone()[0]
+
     return ValidateResponse(
         valid=True,
         tier=row["tier"],
@@ -138,4 +145,6 @@ def validate(req: ValidateRequest, request: Request) -> ValidateResponse:
         email=row["email"],
         expires_at=row["expires_at"],
         metadata=metadata,
+        seats_used=seats_used,
+        seats_total=seats_total,
     )
