@@ -241,6 +241,9 @@ class LicenseInfo(BaseModel):
     valid: bool = False
     email: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Strict-tier seat info — populated from server response when present.
+    seats_used: int | None = None
+    seats_total: int | None = None
 
 
 def _validate_key_format(key: str) -> bool:
@@ -376,6 +379,8 @@ def _validate_with_server(key: str) -> LicenseInfo | None:
             valid=data.get("valid", False),
             email=data.get("email"),
             metadata=data.get("metadata", {}),
+            seats_used=data.get("seats_used"),
+            seats_total=data.get("seats_total"),
         )
     except Exception:
         logger.debug("Server validation failed", exc_info=True)
@@ -399,6 +404,8 @@ def _load_cache(key: str) -> LicenseInfo | None:
             valid=data.get("valid", False),
             email=data.get("email"),
             metadata=data.get("metadata", {}),
+            seats_used=data.get("seats_used"),
+            seats_total=data.get("seats_total"),
         )
     except Exception:
         return None
@@ -418,6 +425,8 @@ def _load_cache_expired(key: str) -> LicenseInfo | None:
             valid=data.get("valid", False),
             email=data.get("email"),
             metadata={**data.get("metadata", {}), "degraded": True},
+            seats_used=data.get("seats_used"),
+            seats_total=data.get("seats_total"),
         )
         return info
     except Exception:
@@ -434,6 +443,8 @@ def _save_cache(key: str, info: LicenseInfo) -> None:
             "valid": info.valid,
             "email": info.email,
             "metadata": info.metadata,
+            "seats_used": info.seats_used,
+            "seats_total": info.seats_total,
             "cached_at": time.time(),
         }
         _CACHE_FILE.write_text(json.dumps(payload))
@@ -484,6 +495,16 @@ def get_license_info() -> LicenseInfo:
     server_info = _validate_with_server(key)
     if server_info is not None:
         _save_cache(key, server_info)
+        # Strict-only: claim a seat on first server validation since we last
+        # had a cache hit. The seats module gates internally on its own 24h
+        # cache, so calling it here is a no-op after the first claim.
+        if server_info.tier == Tier.STRICT and server_info.license_key:
+            try:
+                from anchormd.seats import claim_seat_on_startup
+
+                claim_seat_on_startup(server_info.license_key)
+            except Exception:
+                logger.debug("Seat claim hook failed (non-blocking)", exc_info=True)
         return server_info
 
     # Step 4: Server down — try expired cache.
