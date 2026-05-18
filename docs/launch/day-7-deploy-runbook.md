@@ -301,10 +301,16 @@ echo "$STRIPE_SECRET_KEY" | head -c 10
 # EXPECTED: sk_live_...
 
 cd ~/projects/anchormd
-python scripts/stripe_setup.py --live 2>&1 | tee /tmp/stripe-live-output.txt
+# CRITICAL: pass --strict-only in live mode. Without it, the script would
+# create DUPLICATE Pro and Bundle products in production (you already have
+# live versions from earlier launches; your existing customers continue to
+# bill against those). --strict-only creates ONLY the 3 new Strict SKUs.
+python scripts/stripe_setup.py --live --strict-only 2>&1 | tee /tmp/stripe-live-output.txt
 ```
 
 The script enforces `--live` for live keys — this is the secondary safety check.
+
+`--strict-only` skips the Pro + Bundle product-creation blocks entirely and prints "--strict-only: skipping Pro and Bundle product creation" at the top of stdout. The summary print at the end will only list the 3 Strict Payment Links (the Pro/Bundle lines are conditional on those vars being set).
 
 **Capture the live URLs:**
 
