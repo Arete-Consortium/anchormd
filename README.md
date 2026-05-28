@@ -199,4 +199,4 @@ ruff format src/ tests/
 
 ## License
 
-MIT
+Business Source License 1.1 — see [LICENSE](LICENSE). Each release converts to the MIT License four years after publication (per the BSL change date).
