@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -26,5 +30,11 @@ jobs:
         run: ruff check src/ tests/
       - name: Format check
         run: ruff format --check src/ tests/
+      # Non-blocking for now: src/ has pre-existing type errors that the
+      # PR-scoped AI Quality Gate (changed files only) never surfaced.
+      # Ratchet to a hard gate (remove continue-on-error) once src/ is clean.
+      - name: Type check
+        run: mypy src/
+        continue-on-error: true
       - name: Test
         run: pytest tests/ -v --tb=short

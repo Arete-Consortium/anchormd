@@ -1,0 +1,23 @@
+# CODEOWNERS — required reviewers for sensitive surfaces.
+# Pairs with branch protection (require_code_owner_reviews) on main.
+# Per CLAUDE.md: pricing and monetization flows must not change without approval.
+
+# Default owner for everything
+*                               @AreteDriver
+
+# Monetization & licensing — do NOT change pricing without approval
+/license_server/                @AreteDriver
+/scripts/stripe_setup.py        @AreteDriver
+/scripts/keygen.py              @AreteDriver
+/src/anchormd/licensing.py      @AreteDriver
+/src/anchormd/gates.py          @AreteDriver
+
+# Payment / fulfillment automation
+/license_server/stripe_webhooks.py   @AreteDriver
+/license_server/routes/webhook.py    @AreteDriver
+/license_server/key_gen.py           @AreteDriver
+/license_server/email_delivery.py    @AreteDriver
+
+# CI / deployment / security config
+/.github/                       @AreteDriver
+/fly.web.toml                   @AreteDriver

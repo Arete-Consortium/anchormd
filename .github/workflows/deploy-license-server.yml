@@ -1,0 +1,38 @@
+name: Deploy License Server
+
+# Deploys the FastAPI license server to Fly.io (app: cmdf-license).
+# Gated behind the `production` GitHub Environment — attach required reviewers
+# there to require manual approval before a live deploy (Stripe + license keys).
+#
+# Requires repository secret: FLY_API_TOKEN
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "license_server/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-license-server
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: fly deploy (cmdf-license)
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - uses: actions/checkout@v6
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy
+        run: >-
+          flyctl deploy
+          --config license_server/fly.toml
+          --dockerfile license_server/Dockerfile
+          --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
