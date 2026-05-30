@@ -19,8 +19,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  RUFF_VERSION: "0.15.11"
-  MYPY_VERSION: "1.19.1"
+  RUFF_VERSION: "0.15.15"
+  MYPY_VERSION: "2.1.0"
   PYTEST_VERSION: "9.0.3"
 
 jobs:
