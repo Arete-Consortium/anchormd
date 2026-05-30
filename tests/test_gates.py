@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from anchormd.cli import app
@@ -71,14 +72,12 @@ class TestCheckPresetAccess:
             check_preset_access("python-fastapi")
 
     def test_pro_preset_blocks_free_user(self) -> None:
-        from click.exceptions import Exit
-
         with (
             patch(
                 "anchormd.licensing._find_license_key",
                 return_value=None,
             ),
-            pytest.raises(Exit),
+            pytest.raises(typer.Exit),
         ):
             check_preset_access("react-native")
 
@@ -93,27 +92,23 @@ class TestCheckPresetAccess:
 
     def test_unknown_preset_gives_not_found(self) -> None:
         """Unknown presets should say 'not found', not upsell to Pro."""
-        from click.exceptions import Exit
-
         with (
             patch(
                 "anchormd.licensing._find_license_key",
                 return_value=None,
             ),
-            pytest.raises(Exit),
+            pytest.raises(typer.Exit),
         ):
             check_preset_access("totally-fake-preset")
 
     def test_unknown_preset_message_not_pro(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Unknown preset error should not mention Pro upgrade."""
-        from click.exceptions import Exit
-
         with (
             patch(
                 "anchormd.licensing._find_license_key",
                 return_value=None,
             ),
-            pytest.raises(Exit),
+            pytest.raises(typer.Exit),
         ):
             check_preset_access("nonexistent")
 
