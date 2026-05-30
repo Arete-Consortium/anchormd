@@ -12,6 +12,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from anchormd.analyzers.suggestions import Suggestion, suggest_for
 
@@ -143,7 +144,7 @@ def harvest(
         return report
 
     # signature -> (tool, count, set(session_ids), examples)
-    agg: dict[str, dict] = defaultdict(
+    agg: dict[str, dict[str, Any]] = defaultdict(
         lambda: {"tool": "?", "count": 0, "sessions": set(), "examples": []}
     )
 

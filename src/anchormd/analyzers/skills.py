@@ -1,16 +1,43 @@
-"""AI Skills analyzer — detects installed Claude Code skills and recommends bundles."""
+"""AI Skills analyzer — detects installed Codex/Claude skills and recommends bundles."""
 
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
+from typing import Any
 
 from anchormd.models import AnalysisResult, ForgeConfig, ProjectStructure
 
 logger = logging.getLogger(__name__)
 
-# Default skills directory for Claude Code.
-DEFAULT_SKILLS_DIR = Path.home() / ".claude" / "skills"
+# Supported local skill directories (newest first).
+PROJECT_SKILL_ROOTS = (".codex", ".claude")
+
+
+def _default_skills_dirs() -> list[Path]:
+    """Build default skill directory candidates in priority order."""
+    candidates: list[Path] = []
+
+    codex_home = os.environ.get("CODEX_HOME")
+    if codex_home:
+        candidates.append(Path(codex_home).expanduser() / "skills")
+
+    home = Path.home()
+    candidates.extend(
+        [
+            home / ".codex" / "skills",
+            home / ".claude" / "skills",
+        ]
+    )
+
+    # Deduplicate while preserving order.
+    unique: list[Path] = []
+    for candidate in candidates:
+        if candidate not in unique:
+            unique.append(candidate)
+    return unique
+
 
 # Map framework indicators to recommended skill bundles.
 FRAMEWORK_BUNDLE_MAP: dict[str, list[str]] = {
@@ -43,15 +70,16 @@ class SkillsAnalyzer:
     """Detects installed AI skills and recommends relevant ones for the project."""
 
     def __init__(self, skills_dir: Path | None = None) -> None:
-        self._skills_dir = skills_dir or DEFAULT_SKILLS_DIR
+        self._skills_dirs = [skills_dir.expanduser()] if skills_dir else _default_skills_dirs()
 
     def analyze(self, structure: ProjectStructure, config: ForgeConfig) -> AnalysisResult:
         """Detect installed skills and recommend bundles based on project."""
         findings: dict[str, object] = {}
 
-        installed = self._detect_installed_skills()
+        installed, installed_dirs = self._detect_installed_skills()
         findings["installed_skills"] = installed
         findings["installed_count"] = len(installed)
+        findings["installed_skill_dirs"] = [str(path) for path in installed_dirs]
 
         frameworks = self._detect_frameworks(structure)
         findings["detected_frameworks"] = frameworks
@@ -75,16 +103,21 @@ class SkillsAnalyzer:
             section_content=section,
         )
 
-    def _detect_installed_skills(self) -> list[str]:
-        """Find skills installed in ~/.claude/skills/."""
-        if not self._skills_dir.is_dir():
-            return []
+    def _detect_installed_skills(self) -> tuple[list[str], list[Path]]:
+        """Find skills installed in supported local skill directories."""
+        skills: set[str] = set()
+        installed_dirs: list[Path] = []
 
-        skills = []
-        for entry in sorted(self._skills_dir.iterdir()):
-            if entry.is_dir() and (entry / "SKILL.md").is_file():
-                skills.append(entry.name)
-        return skills
+        for skills_dir in self._skills_dirs:
+            if not skills_dir.is_dir():
+                continue
+
+            installed_dirs.append(skills_dir)
+            for entry in sorted(skills_dir.iterdir()):
+                if entry.is_dir() and (entry / "SKILL.md").is_file():
+                    skills.add(entry.name)
+
+        return sorted(skills), installed_dirs
 
     def _detect_frameworks(self, structure: ProjectStructure) -> list[str]:
         """Detect frameworks from project structure."""
@@ -115,17 +148,22 @@ class SkillsAnalyzer:
         return frameworks
 
     def _detect_project_skills(self, structure: ProjectStructure) -> list[str]:
-        """Detect skills defined within the project (.claude/commands/, .claude/agents/)."""
-        skills: list[str] = []
-        for subdir in ("commands", "agents", "skills"):
-            skill_dir = structure.root / ".claude" / subdir
-            if skill_dir.is_dir():
+        """Detect skills defined within project-local instruction directories."""
+        skills: set[str] = set()
+
+        for root_name in PROJECT_SKILL_ROOTS:
+            for subdir in ("commands", "agents", "skills"):
+                skill_dir = structure.root / root_name / subdir
+                if not skill_dir.is_dir():
+                    continue
+
                 for entry in sorted(skill_dir.iterdir()):
                     if entry.suffix == ".md":
-                        skills.append(f"{subdir}/{entry.stem}")
+                        skills.add(f"{subdir}/{entry.stem}")
                     elif entry.is_dir() and (entry / "SKILL.md").is_file():
-                        skills.append(f"{subdir}/{entry.name}")
-        return skills
+                        skills.add(f"{subdir}/{entry.name}")
+
+        return sorted(skills)
 
     def _recommend_skills(
         self,
@@ -170,12 +208,19 @@ class SkillsAnalyzer:
             bundles.update(FRAMEWORK_BUNDLE_MAP.get(fw, []))
         return sorted(bundles)
 
-    def _render_section(self, findings: dict[str, object]) -> str:
+    def _render_section(self, findings: dict[str, Any]) -> str:
         """Render skills section as markdown."""
-        installed = findings.get("installed_skills", [])
-        project_skills = findings.get("project_skills", [])
-        recommended = findings.get("recommended_skills", [])
-        recommended_bundles = findings.get("recommended_bundles", [])
+
+        def _to_str_list(value: object) -> list[str]:
+            if isinstance(value, list):
+                return [str(item) for item in value]
+            return []
+
+        installed = _to_str_list(findings.get("installed_skills", []))
+        installed_dirs = _to_str_list(findings.get("installed_skill_dirs", []))
+        project_skills = _to_str_list(findings.get("project_skills", []))
+        recommended = _to_str_list(findings.get("recommended_skills", []))
+        recommended_bundles = _to_str_list(findings.get("recommended_bundles", []))
 
         if not installed and not project_skills and not recommended:
             return ""
@@ -183,7 +228,13 @@ class SkillsAnalyzer:
         lines: list[str] = ["## AI Skills", ""]
 
         if installed:
-            lines.append(f"**Installed**: {len(installed)} skills in `~/.claude/skills/`")
+            if installed_dirs:
+                dirs_text = ", ".join(
+                    f"`{self._format_display_path(Path(path))}`" for path in installed_dirs
+                )
+                lines.append(f"**Installed**: {len(installed)} skills across {dirs_text}")
+            else:
+                lines.append(f"**Installed**: {len(installed)} skills")
             # Show first 15, summarize rest.
             shown = installed[:15]
             lines.append(f"- {', '.join(f'`{s}`' for s in shown)}")
@@ -210,3 +261,13 @@ class SkillsAnalyzer:
             lines.append("")
 
         return "\n".join(lines)
+
+    @staticmethod
+    def _format_display_path(path: Path) -> str:
+        """Render absolute paths relative to home when possible."""
+        expanded = path.expanduser()
+        try:
+            relative = expanded.relative_to(Path.home())
+        except ValueError:
+            return str(expanded)
+        return f"~/{relative.as_posix()}"

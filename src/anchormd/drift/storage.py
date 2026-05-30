@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 import yaml
 from pydantic import ValidationError
@@ -112,7 +113,7 @@ def load_history(root: Path) -> list[RunRecord]:
     return records
 
 
-def load_trend(root: Path) -> list[dict]:
+def load_trend(root: Path) -> list[dict[str, Any]]:
     """Load cached trend data, or return empty list."""
     path = root / _TREND_FILE
     if not path.is_file():
@@ -124,7 +125,7 @@ def load_trend(root: Path) -> list[dict]:
         return []
 
 
-def save_trend(root: Path, trend_data: list[dict]) -> None:
+def save_trend(root: Path, trend_data: list[dict[str, Any]]) -> None:
     """Persist aggregated trend data."""
     ensure_dirs(root)
     path = root / _TREND_FILE

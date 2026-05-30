@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from anchormd.cli import app
@@ -12,8 +13,18 @@ from anchormd.gates import (
     check_preset_access,
     get_available_presets,
 )
+from anchormd.licensing import LicenseInfo, Tier
 
 runner = CliRunner()
+
+
+def _verified_pro_info() -> LicenseInfo:
+    return LicenseInfo(
+        tier=Tier.PRO,
+        license_key="ANMD-ABCD-EFGH-32E3",
+        valid=True,
+        email="test@test.com",
+    )
 
 
 class TestRequireProDecorator:
@@ -30,9 +41,9 @@ class TestRequireProDecorator:
 
     def test_allows_pro_user(self) -> None:
         """Pro-gated commands should run for Pro users."""
-        with patch(
-            "anchormd.licensing._find_license_key",
-            return_value="ANMD-ABCD-EFGH-32E3",
+        with (
+            patch("anchormd.licensing._find_license_key", return_value="ANMD-ABCD-EFGH-32E3"),
+            patch("anchormd.licensing._validate_with_server", return_value=_verified_pro_info()),
         ):
             # init will fail on path validation but should get past the gate.
             result = runner.invoke(app, ["init", "/nonexistent/path"])
@@ -61,21 +72,19 @@ class TestCheckPresetAccess:
             check_preset_access("python-fastapi")
 
     def test_pro_preset_blocks_free_user(self) -> None:
-        from click.exceptions import Exit
-
         with (
             patch(
                 "anchormd.licensing._find_license_key",
                 return_value=None,
             ),
-            pytest.raises(Exit),
+            pytest.raises(typer.Exit),
         ):
             check_preset_access("react-native")
 
     def test_pro_preset_passes_for_pro_user(self) -> None:
-        with patch(
-            "anchormd.licensing._find_license_key",
-            return_value="ANMD-ABCD-EFGH-32E3",
+        with (
+            patch("anchormd.licensing._find_license_key", return_value="ANMD-ABCD-EFGH-32E3"),
+            patch("anchormd.licensing._validate_with_server", return_value=_verified_pro_info()),
         ):
             # Should not raise for Pro users.
             check_preset_access("react-native")
@@ -83,27 +92,23 @@ class TestCheckPresetAccess:
 
     def test_unknown_preset_gives_not_found(self) -> None:
         """Unknown presets should say 'not found', not upsell to Pro."""
-        from click.exceptions import Exit
-
         with (
             patch(
                 "anchormd.licensing._find_license_key",
                 return_value=None,
             ),
-            pytest.raises(Exit),
+            pytest.raises(typer.Exit),
         ):
             check_preset_access("totally-fake-preset")
 
     def test_unknown_preset_message_not_pro(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Unknown preset error should not mention Pro upgrade."""
-        from click.exceptions import Exit
-
         with (
             patch(
                 "anchormd.licensing._find_license_key",
                 return_value=None,
             ),
-            pytest.raises(Exit),
+            pytest.raises(typer.Exit),
         ):
             check_preset_access("nonexistent")
 
@@ -119,9 +124,9 @@ class TestGetAvailablePresets:
             assert presets["react-native"] == "pro"
 
     def test_pro_user_sees_unlocked(self) -> None:
-        with patch(
-            "anchormd.licensing._find_license_key",
-            return_value="ANMD-ABCD-EFGH-32E3",
+        with (
+            patch("anchormd.licensing._find_license_key", return_value="ANMD-ABCD-EFGH-32E3"),
+            patch("anchormd.licensing._validate_with_server", return_value=_verified_pro_info()),
         ):
             presets = get_available_presets()
             assert presets["default"] == "free"
@@ -157,9 +162,9 @@ class TestCLITierDisplay:
             assert "Free" in result.output
 
     def test_status_pro(self) -> None:
-        with patch(
-            "anchormd.licensing._find_license_key",
-            return_value="ANMD-ABCD-EFGH-32E3",
+        with (
+            patch("anchormd.licensing._find_license_key", return_value="ANMD-ABCD-EFGH-32E3"),
+            patch("anchormd.licensing._validate_with_server", return_value=_verified_pro_info()),
         ):
             result = runner.invoke(app, ["status"])
             assert result.exit_code == 0

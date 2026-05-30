@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Any
 
 from anchormd.drift.adapters.base import ModelAdapter
 from anchormd.exceptions import DriftError
@@ -22,7 +23,7 @@ class OllamaAdapter(ModelAdapter):
         except ImportError as exc:
             raise DriftError("httpx not installed. Run: pip install httpx") from exc
 
-        payload: dict = {
+        payload: dict[str, Any] = {
             "model": self._model,
             "prompt": prompt,
             "stream": False,
@@ -45,7 +46,7 @@ class OllamaAdapter(ModelAdapter):
         except json.JSONDecodeError as exc:
             raise DriftError(f"Ollama returned invalid JSON: {resp.text[:200]}") from exc
 
-        return data.get("response", "")
+        return str(data.get("response", ""))
 
     def name(self) -> str:
         return f"ollama/{self._model}"

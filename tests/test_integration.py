@@ -74,6 +74,32 @@ class TestGenerateWithPreset:
             ["generate", str(tmp_project), "-p", "minimal", "--quiet"],
         )
         assert result.exit_code == 0
+        content = (tmp_project / "CLAUDE.md").read_text()
+        assert "## Common Commands" in content
+        assert "## Anti-Patterns" in content
+        assert "## Architecture" not in content
+        assert "## Dependencies" not in content
+
+    def test_framework_preset_overrides_sections(self, tmp_project: Path) -> None:
+        result = runner.invoke(
+            app,
+            ["generate", str(tmp_project), "-p", "python-fastapi", "--quiet"],
+        )
+        assert result.exit_code == 0
+        content = (tmp_project / "CLAUDE.md").read_text()
+        assert "Use async/await for all endpoint handlers" in content
+        assert "uvicorn app.main:app --reload" in content
+        assert "Do NOT use synchronous database calls in async endpoints" in content
+
+    def test_default_auto_detect_applies_framework_guidance(self, tmp_react_project: Path) -> None:
+        result = runner.invoke(
+            app,
+            ["generate", str(tmp_react_project), "-p", "default", "--quiet"],
+        )
+        assert result.exit_code == 0
+        content = (tmp_react_project / "CLAUDE.md").read_text()
+        assert "Use functional components with hooks exclusively" in content
+        assert "Do NOT use class components" in content
 
 
 class TestGenerateWithOutput:

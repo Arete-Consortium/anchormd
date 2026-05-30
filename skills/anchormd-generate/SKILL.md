@@ -1,7 +1,7 @@
 ---
 name: anchormd-generate
 description: Generate a CLAUDE.md file for the current project. Use when setting up a new project for AI-assisted development, when a project lacks a CLAUDE.md, when the user asks to create project context for Claude Code, or when onboarding a codebase for agent use. Scans the codebase to detect languages, frameworks, testing patterns, build commands, and conventions, then produces a structured CLAUDE.md with coding standards, anti-patterns, and project-specific instructions.
-license: MIT
+license: BSL-1.1
 ---
 
 # Generate CLAUDE.md
@@ -29,8 +29,8 @@ anchormd must be installed: `pip install anchormd`
 
 3. If the output needs refinement, iterate:
    ```bash
-   anchormd generate . --preset fastapi   # Use a framework-specific preset
-   anchormd generate . --format markdown  # Control output format
+   anchormd generate . --preset python-fastapi  # Explicit framework preset
+   anchormd generate . --preset minimal         # Fewer sections
    ```
 
 4. Audit the generated file for quality:
@@ -40,9 +40,9 @@ anchormd must be installed: `pip install anchormd`
 
 ## Available Presets
 
-Community presets (free): django, flask, fastapi, react, nextjs, express, rails, spring, go-api, rust-cli, generic
+Community presets (free): default, minimal, full, python-fastapi, python-cli, django, react-typescript, nextjs, rust, go, node-express
 
-Pro presets (license required): terraform, kubernetes, monorepo, microservices, mobile, data-pipeline
+Pro presets (license required): monorepo, library, react-native, data-science, devops, mobile
 
 ## When NOT to Use
 

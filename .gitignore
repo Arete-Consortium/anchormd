@@ -19,7 +19,8 @@ Thumbs.db
 *.swo
 *~
 .idea/
-.vscode/
+.vscode/*
+!.vscode/extensions.json
 *.iml
 .env*
 output/

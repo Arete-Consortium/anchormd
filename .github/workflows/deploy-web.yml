@@ -1,0 +1,37 @@
+name: Deploy Web
+
+# Deploys the anchormd-web app to Fly.io (app: anchormd-web).
+# Builds from the project root using fly.web.toml.
+# Gated behind the `production` GitHub Environment — attach required reviewers
+# there to require manual approval before a live deploy.
+#
+# Requires repository secret: FLY_API_TOKEN
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "fly.web.toml"
+      - ".dockerignore"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-web
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: fly deploy (anchormd-web)
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - uses: actions/checkout@v6
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy
+        run: flyctl deploy --config fly.web.toml --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

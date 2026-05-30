@@ -32,7 +32,7 @@ class GoogleAdapter(ModelAdapter):
             system_instruction=system,
         )
         response = gen_model.generate_content(prompt)
-        return response.text
+        return str(response.text)
 
     def name(self) -> str:
         return self._model

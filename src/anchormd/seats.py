@@ -43,7 +43,7 @@ def _load_seat_cache(license_key: str, machine_id: str) -> bool:
             return False
         if data.get("machine_id") != machine_id:
             return False
-        claimed_at = data.get("claimed_at", 0)
+        claimed_at = float(data.get("claimed_at", 0))
         return (time.time() - claimed_at) < _CLAIM_CACHE_SECONDS
     except Exception:
         return False

@@ -10,10 +10,10 @@ Set up the project foundation: package config, data models, configuration, and b
 
 1. **Create `pyproject.toml`** with PEP 621 metadata:
    - Name: `anchormd`
-   - Version: `0.1.0`
+   - Version: `0.4.0`
    - Description: "Generate and audit CLAUDE.md files for AI coding agents"
    - Author: AreteDriver
-   - License: MIT
+   - License: BSL-1.1
    - Python requires: `>=3.11`
    - All dependencies from CLAUDE.md
    - Entry point: `anchormd = "anchormd.cli:app"`
@@ -21,7 +21,7 @@ Set up the project foundation: package config, data models, configuration, and b
    - Ruff config: line-length=100, target-version="py311"
 
 2. **Create `src/anchormd/__init__.py`**:
-   - `__version__ = "0.1.0"`
+   - `__version__ = "0.4.0"`
    - `__all__` exports
 
 3. **Create `src/anchormd/models.py`** with Pydantic v2 models:
