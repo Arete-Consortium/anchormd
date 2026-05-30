@@ -1,6 +1,19 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* Custom "anchor" palette (ported from tailwind.config.js for v4 CSS-first config). */
+@theme {
+  --color-anchor-50: #f0f4ff;
+  --color-anchor-100: #dbe4ff;
+  --color-anchor-200: #bac8ff;
+  --color-anchor-300: #91a7ff;
+  --color-anchor-400: #748ffc;
+  --color-anchor-500: #5c7cfa;
+  --color-anchor-600: #4c6ef5;
+  --color-anchor-700: #4263eb;
+  --color-anchor-800: #3b5bdb;
+  --color-anchor-900: #364fc7;
+  --color-anchor-950: #1e3a8a;
+}
 
 /* Markdown output styling */
 .markdown-output h1 {
