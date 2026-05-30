@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from anchormd.drift.models import RunRecord
 
 
-def aggregate_trend(history: list[RunRecord]) -> list[dict]:
+def aggregate_trend(history: list[RunRecord]) -> list[dict[str, Any]]:
     """Aggregate run history into trend data points."""
     return [
         {

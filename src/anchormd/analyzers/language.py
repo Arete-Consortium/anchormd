@@ -221,7 +221,7 @@ class LanguageAnalyzer:
         primary = findings.get("primary_language")
         langs = findings.get("languages", {})
         if primary:
-            other_langs = [k for k in langs if k != primary]  # type: ignore[union-attr]
+            other_langs = [k for k in langs if k != primary] if isinstance(langs, dict) else []
             lang_str = str(primary)
             if other_langs:
                 lang_str += f", {', '.join(other_langs)}"
