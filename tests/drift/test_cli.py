@@ -45,6 +45,24 @@ def _mock_pro_license():
     )
 
 
+def _mock_strict_license():
+    """Mock get_license_info to return a Strict-tier LicenseInfo.
+
+    Strict-tier server validation isn't in the local-only fallback path —
+    we mock the top-level resolver directly.
+    """
+    from anchormd.licensing import LicenseInfo, Tier
+
+    return patch(
+        "anchormd.licensing.get_license_info",
+        return_value=LicenseInfo(
+            tier=Tier.STRICT,
+            license_key="ANMD-ABCD-EFGH-32E3",
+            valid=True,
+        ),
+    )
+
+
 def _make_run_record(score: float = 0.85) -> RunRecord:
     return RunRecord(
         run_id="cli_test",
@@ -132,8 +150,9 @@ class TestDriftReport:
         assert result.exit_code == 1
 
     def test_ci_mode_stable(self, tmp_path: Path) -> None:
+        # CI mode moved from Pro → Strict at v0.6.0.
         _seed_history(tmp_path, [_make_run_record()])
-        with _mock_pro_license():
+        with _mock_strict_license():
             result = runner.invoke(app, ["drift", "report", str(tmp_path), "--ci"])
         assert result.exit_code == 0
 
@@ -142,7 +161,7 @@ class TestDriftReport:
         with _mock_free_license():
             result = runner.invoke(app, ["drift", "report", str(tmp_path), "--ci"])
         assert result.exit_code == 1
-        assert "Pro tier" in result.output
+        assert "Strict" in result.output
 
     def test_html_report_free_tier(self, tmp_path: Path) -> None:
         _seed_history(tmp_path, [_make_run_record()])
@@ -152,7 +171,7 @@ class TestDriftReport:
                 ["drift", "report", str(tmp_path), "--html", str(tmp_path / "report.html")],
             )
         assert result.exit_code == 1
-        assert "Pro tier" in result.output
+        assert "Strict" in result.output
 
 
 class TestDriftBaseline:
@@ -195,8 +214,9 @@ class TestDriftGenerate:
             )
         assert result.exit_code == 1
 
-    def test_pro_tier_no_file(self, tmp_path: Path) -> None:
-        with _mock_pro_license():
+    def test_strict_tier_no_file(self, tmp_path: Path) -> None:
+        # drift generate moved from Pro → Strict at v0.6.0.
+        with _mock_strict_license():
             result = runner.invoke(
                 app,
                 [
@@ -219,8 +239,9 @@ class TestDriftFix:
             result = runner.invoke(app, ["drift", "fix", str(tmp_path), "--model", "ollama/test"])
         assert result.exit_code == 1
 
-    def test_pro_no_history(self, tmp_path: Path) -> None:
-        with _mock_pro_license():
+    def test_strict_no_history(self, tmp_path: Path) -> None:
+        # drift fix moved from Pro → Strict at v0.6.0.
+        with _mock_strict_license():
             result = runner.invoke(app, ["drift", "fix", str(tmp_path), "--model", "ollama/test"])
         assert result.exit_code == 1
         assert "No run history" in result.output

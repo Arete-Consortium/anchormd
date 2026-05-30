@@ -17,6 +17,7 @@ from rich.table import Table
 
 from anchormd import __version__
 from anchormd.analyzers import run_all
+from anchormd.audit_logger import log_command as _audit_log
 from anchormd.exceptions import ForgeError
 from anchormd.gates import check_preset_access, record_scan_usage, require_pro, require_quota
 from anchormd.generators.composer import DocumentComposer
@@ -92,6 +93,7 @@ def generate(
 ) -> None:
     """Generate a CLAUDE.md file for the target project."""
     track_command("generate")
+    _audit_log("generate")
     try:
         root = path.resolve()
         if not root.is_dir():
@@ -179,6 +181,7 @@ def audit(
 ) -> None:
     """Audit an existing CLAUDE.md file for gaps and improvements."""
     track_command("audit")
+    _audit_log("audit")
     try:
         target = path.resolve()
         if not target.is_file():
@@ -276,6 +279,7 @@ def verify(
 ) -> None:
     """Verify CLAUDE.md claims against the filesystem (files, version, deps)."""
     track_command("verify")
+    _audit_log("verify")
     from anchormd.analyzers.reality import verify as run_verify
 
     target = path.resolve()
@@ -360,8 +364,20 @@ def fleet(
 ) -> None:
     """Audit every CLAUDE.md under a root directory and emit a ranked report."""
     track_command("fleet")
+    _audit_log("fleet")
     from anchormd.analyzers.reality import verify as run_verify
     from anchormd.generators.auditor import ClaudeMdAuditor
+
+    # --json output is a Strict-only feature (audit-log + machine-readable export).
+    if output_json:
+        from anchormd.licensing import get_upgrade_message, has_feature
+
+        if not has_feature("fleet_json"):
+            from anchormd.telemetry import track_strict_gate
+
+            track_strict_gate("fleet_json")
+            console.print(f"[yellow]{get_upgrade_message('fleet_json')}[/yellow]")
+            raise typer.Exit(1)
 
     root = root.resolve()
     if not root.is_dir():
@@ -520,6 +536,7 @@ def harvest(
 ) -> None:
     """Harvest recurring tool errors from Claude Code transcripts for this project."""
     track_command("harvest")
+    _audit_log("harvest")
     from anchormd.analyzers.harvest import harvest as run_harvest
     from anchormd.analyzers.suggestions import format_anti_patterns_block
 
@@ -647,6 +664,7 @@ def patch(
 ) -> None:
     """Harvest gotchas and splice new anti-patterns into CLAUDE.md."""
     track_command("patch")
+    _audit_log("patch")
     from anchormd.analyzers.harvest import harvest as run_harvest
     from anchormd.analyzers.suggestions import format_bullets
     from anchormd.generators.patcher import patch as run_patch
@@ -707,6 +725,7 @@ def init(
 ) -> None:
     """Initialize a CLAUDE.md with interactive prompts. [Pro]"""
     track_command("init")
+    _audit_log("init")
     try:
         root = path.resolve()
         if not root.is_dir():
@@ -746,6 +765,7 @@ def diff(
 ) -> None:
     """Show what would change if CLAUDE.md were regenerated. [Pro]"""
     track_command("diff")
+    _audit_log("diff")
     try:
         root = path.resolve()
         existing_path = root / "CLAUDE.md"
@@ -806,7 +826,9 @@ def presets() -> None:
     for name, pack in PRESET_PACKS.items():
         if name in PRO_PRESETS:
             tier_label = (
-                "[green]Unlocked[/green]" if info.tier == Tier.PRO else "[yellow]Pro[/yellow]"
+                "[green]Unlocked[/green]"
+                if info.tier in (Tier.PRO, Tier.STRICT)
+                else "[yellow]Pro[/yellow]"
             )
         else:
             tier_label = "[dim]Free[/dim]"
@@ -853,7 +875,11 @@ def frameworks() -> None:
 
     # Premium presets.
     for name, preset in PREMIUM_PRESETS.items():
-        tier_label = "[green]Unlocked[/green]" if info.tier == Tier.PRO else "[yellow]Pro[/yellow]"
+        tier_label = (
+            "[green]Unlocked[/green]"
+            if info.tier in (Tier.PRO, Tier.STRICT)
+            else "[yellow]Pro[/yellow]"
+        )
         table.add_row(
             name,
             preset.description,
@@ -875,7 +901,12 @@ def status() -> None:
     info = get_license_info()
     tier_config = TIER_DEFINITIONS[info.tier]
 
-    tier_style = "green" if info.tier == Tier.PRO else "blue"
+    if info.tier == Tier.STRICT:
+        tier_style = "cyan"
+    elif info.tier == Tier.PRO:
+        tier_style = "green"
+    else:
+        tier_style = "blue"
     console.print(
         Panel(
             f"  Tier: [{tier_style}]{tier_config.name}[/{tier_style}] "
@@ -1025,6 +1056,7 @@ def tech_debt(
 ) -> None:
     """Scan codebase for technical debt signals. [Pro]"""
     track_command("tech_debt")
+    _audit_log("tech_debt")
     try:
         root = path.resolve()
         if not root.is_dir():
@@ -1179,6 +1211,7 @@ def opsec(
 ) -> None:
     """Scan codebase for OPSEC leaks: secrets, local paths, strategy docs. [Pro]"""
     track_command("opsec")
+    _audit_log("opsec")
     try:
         root = path.resolve()
         if not root.is_dir():
@@ -1314,6 +1347,7 @@ def github_health(
 ) -> None:
     """Analyze GitHub repository health via gh CLI. [Pro]"""
     track_command("github_health")
+    _audit_log("github_health")
     try:
         root = path.resolve()
         if not root.is_dir():
@@ -1442,6 +1476,7 @@ def cleanup(
     Dry-run by default. Use --execute to apply changes.
     """
     track_command("cleanup")
+    _audit_log("cleanup")
     try:
         root = path.resolve()
         if not root.is_dir():

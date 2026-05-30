@@ -4,6 +4,8 @@ import { useAuth } from "./AuthContext";
 import { getGitHubLoginUrl, createDeepScanCheckout, getDeepScanReport, getFixReport, pushPR, getCursorRules, getCopilotInstructions, getWindsurfRules, getAgentsMd, getCodexInstructions, getClaudeMd } from "./api";
 import ReposPage from "./ReposPage";
 import AdminPage from "./AdminPage";
+import StrictPage from "./StrictPage";
+import PricingPage from "./PricingPage";
 
 const POLL_INTERVAL = 1500;
 const MAX_POLLS = 60;
@@ -590,7 +592,14 @@ function DeepScanReportView({ report }) {
 
 export default function App() {
   const { user, loading: authLoading, logout, logoutEverywhere } = useAuth();
-  const [page, setPage] = useState("home"); // "home" | "repos" | "admin"
+  const [page, setPage] = useState(() => {
+    // Read ?page= URL param on initial load — supports deep-linking from email
+    // welcome links and "Pricing" / "Strict" nav.
+    const params = new URLSearchParams(window.location.search);
+    const requested = params.get("page");
+    if (requested === "strict" || requested === "pricing") return requested;
+    return "home";
+  }); // "home" | "repos" | "admin" | "strict" | "pricing"
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
@@ -972,6 +981,10 @@ export default function App() {
           <ReposPage />
         ) : page === "admin" && user?.is_admin ? (
           <AdminPage />
+        ) : page === "strict" ? (
+          <StrictPage />
+        ) : page === "pricing" ? (
+          <PricingPage />
         ) : (
           <>
             {/* Hero */}
@@ -1246,7 +1259,7 @@ export default function App() {
                     </p>
                   </div>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pb-16">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pb-8">
                   <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
                     <div className="text-anchor-400 text-2xl mb-3">&#128274;</div>
                     <h3 className="text-white font-semibold mb-2">Private Repos</h3>
@@ -1273,6 +1286,35 @@ export default function App() {
                     </p>
                   </div>
                 </div>
+
+                {/* Strict CI callout */}
+                <div className="pb-16">
+                  <button
+                    onClick={() => {
+                      setPage("strict");
+                      window.history.replaceState({}, "", "?page=strict");
+                    }}
+                    className="w-full bg-gradient-to-r from-anchor-900/60 to-anchor-800/40
+                               border border-anchor-500/40 hover:border-anchor-500/70
+                               rounded-lg p-6 text-left transition-colors"
+                  >
+                    <div className="flex items-center gap-3 mb-2 flex-wrap">
+                      <span className="bg-anchor-600/30 text-anchor-300 text-xs font-semibold
+                                       px-2 py-0.5 rounded-full border border-anchor-500/40">
+                        New &middot; Strict
+                      </span>
+                      <h3 className="text-white font-semibold text-lg">
+                        Need fail-closed validation for CI?
+                      </h3>
+                    </div>
+                    <p className="text-gray-400 text-sm">
+                      Pro silently degrades to Free when the license server is unreachable.
+                      Strict refuses — your CI fails closed. Plus team seats and a 1-year
+                      audit log. From $49/seat/mo.{" "}
+                      <span className="text-anchor-300 font-medium">Learn more →</span>
+                    </p>
+                  </button>
+                </div>
               </>
 
             )}
@@ -1283,7 +1325,27 @@ export default function App() {
       {/* Footer */}
       <footer className="border-t border-gray-800 py-6 mt-auto">
         <div className="max-w-5xl mx-auto px-4 text-center text-gray-500 text-sm">
-          <div className="flex items-center justify-center gap-4 mb-2">
+          <div className="flex items-center justify-center gap-4 mb-2 flex-wrap">
+            <button
+              onClick={() => {
+                setPage("pricing");
+                window.history.replaceState({}, "", "?page=pricing");
+              }}
+              className="hover:text-gray-300 transition-colors"
+            >
+              Pricing
+            </button>
+            <span className="text-gray-700">&middot;</span>
+            <button
+              onClick={() => {
+                setPage("strict");
+                window.history.replaceState({}, "", "?page=strict");
+              }}
+              className="hover:text-gray-300 transition-colors"
+            >
+              Strict for CI
+            </button>
+            <span className="text-gray-700">&middot;</span>
             <a
               href="https://github.com/Arete-Consortium/anchormd"
               target="_blank"

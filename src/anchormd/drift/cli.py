@@ -9,8 +9,9 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from anchormd.audit_logger import log_command as _audit_log
 from anchormd.exceptions import ForgeError
-from anchormd.gates import require_pro
+from anchormd.gates import require_strict
 from anchormd.telemetry import track_command
 
 drift_app = typer.Typer(
@@ -67,6 +68,7 @@ def init(
 ) -> None:
     """Initialize drift detection with sample benchmarks."""
     track_command("drift_init")
+    _audit_log("drift_init")
     try:
         from anchormd.drift.storage import ensure_dirs, load_benchmarks
 
@@ -106,6 +108,7 @@ def run(
 ) -> None:
     """Run drift benchmarks against a model."""
     track_command("drift_run")
+    _audit_log("drift_run")
     try:
         from anchormd.drift.adapters import get_adapter
         from anchormd.drift.models import DriftSeverity, RunRecord
@@ -133,12 +136,14 @@ def run(
         total = sum(len(s.benchmarks) for s in suites)
         console.print(f"Running {total} benchmarks against {adapter.name()}...")
 
-        # Judge adapter (Pro only).
+        # Judge adapter (Strict only).
         judge = None
         has_pro = has_feature("drift_llm_judge")
         if judge_model:
             if not has_pro:
-                console.print("[yellow]LLM judge requires Pro tier.[/yellow]")
+                from anchormd.licensing import get_upgrade_message
+
+                console.print(f"[yellow]{get_upgrade_message('drift_llm_judge')}[/yellow]")
             else:
                 judge = get_adapter(judge_model)
 
@@ -186,6 +191,7 @@ def report(
 ) -> None:
     """Show the latest drift report."""
     track_command("drift_report")
+    _audit_log("drift_report")
     try:
         from anchormd.drift.reporter import (
             render_html_report,
@@ -208,7 +214,9 @@ def report(
             print(render_json_report(latest))  # noqa: T201
         elif html:
             if not has_feature("drift_html_report"):
-                console.print("[yellow]HTML reports require Pro tier.[/yellow]")
+                from anchormd.licensing import get_upgrade_message
+
+                console.print(f"[yellow]{get_upgrade_message('drift_html_report')}[/yellow]")
                 raise typer.Exit(1)
             html_content = render_html_report(history)
             Path(html).write_text(html_content)
@@ -218,7 +226,9 @@ def report(
 
         if ci:
             if not has_feature("drift_ci"):
-                console.print("[yellow]CI mode requires Pro tier.[/yellow]")
+                from anchormd.licensing import get_upgrade_message
+
+                console.print(f"[yellow]{get_upgrade_message('drift_ci')}[/yellow]")
                 raise typer.Exit(1)
             if latest.severity.value == "critical":
                 raise typer.Exit(1)
@@ -275,7 +285,7 @@ def trend(
 
 
 @drift_app.command()
-@require_pro("drift_generate")
+@require_strict("drift_generate")
 def generate(
     path: Path = typer.Argument(Path("."), help="Path to project root"),  # noqa: B008
     source: str = typer.Option(  # noqa: B008
@@ -287,6 +297,7 @@ def generate(
 ) -> None:
     """Generate benchmarks from a CLAUDE.md file. [Pro]"""
     track_command("drift_generate")
+    _audit_log("drift_generate")
     try:
         from anchormd.drift.adapters import get_adapter
         from anchormd.drift.generator import generate_benchmarks
@@ -316,7 +327,7 @@ def generate(
 
 
 @drift_app.command()
-@require_pro("drift_fix")
+@require_strict("drift_fix")
 def fix(
     path: Path = typer.Argument(Path("."), help="Path to project root"),  # noqa: B008
     model: str = typer.Option(  # noqa: B008
@@ -325,6 +336,7 @@ def fix(
 ) -> None:
     """Suggest CLAUDE.md fixes for failing benchmarks. [Pro]"""
     track_command("drift_fix")
+    _audit_log("drift_fix")
     try:
         from anchormd.drift.adapters import get_adapter
         from anchormd.drift.fixer import suggest_fixes

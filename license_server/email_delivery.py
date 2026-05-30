@@ -85,6 +85,36 @@ def send_license_email(
         return False
 
 
+def send_strict_license_email(email: str, license_key: str, seats: int) -> bool:
+    """Send a Strict-tier welcome email with CI setup snippet + seat info.
+
+    Returns True on success, False on failure (never raises).
+    """
+    smtp_user = get_smtp_user()
+    smtp_password = get_smtp_password()
+
+    if not smtp_user or not smtp_password:
+        logger.warning("SMTP not configured — skipping Strict email to %s", email)
+        return False
+
+    msg = EmailMessage()
+    msg["Subject"] = f"Your AnchorMD Strict License — {seats} seat{'s' if seats != 1 else ''}"
+    msg["From"] = get_smtp_from()
+    msg["To"] = email
+    msg.set_content(_build_strict_body(license_key, seats))
+
+    try:
+        with smtplib.SMTP(get_smtp_host(), get_smtp_port(), timeout=10) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.send_message(msg)
+        logger.info("Strict license emailed to %s (%d seats)", email, seats)
+        return True
+    except Exception:
+        logger.exception("Failed to email Strict license to %s", email)
+        return False
+
+
 def send_bundle_email(
     email: str,
     licenses: list[tuple[str, str]],
@@ -152,9 +182,7 @@ def send_aicards_email(
             card_lines.append(f"    {rarity:10s}  {name}")
         body = (
             f"Your {pack_label} pack ({len(cards)} cards) has been minted on Sui!\n\n"
-            "Cards received:\n"
-            + "\n".join(card_lines)
-            + "\n\n"
+            "Cards received:\n" + "\n".join(card_lines) + "\n\n"
             "View your collection at https://aicards.fun\n\n"
             "— AI Cards TCG"
         )
@@ -202,6 +230,62 @@ def _build_bundle_body(
     lines.append("If you have questions, reply to this email.\n")
     lines.append("— Arete Consortium")
     return "\n".join(lines)
+
+
+def _build_strict_body(license_key: str, seats: int) -> str:
+    """Build the plain-text welcome email body for a Strict license."""
+    seat_word = "seat" if seats == 1 else "seats"
+    return f"""Thanks for purchasing AnchorMD Strict!
+
+Your license: {license_key}
+Seats: {seats} {seat_word}
+
+── 1. Activate the license ──
+
+    export ANCHORMD_LICENSE="{license_key}"
+
+Or save it to a file:
+
+    echo "{license_key}" > ~/.anchormd-license
+
+── 2. Enable fail-closed validation in CI ──
+
+Strict's headline feature is fail-closed license validation. Add this to your
+GitHub Actions workflow (or equivalent for your CI):
+
+    env:
+      ANCHORMD_LICENSE: ${{{{ secrets.ANCHORMD_LICENSE }}}}
+      ANCHORMD_STRICT: "1"
+
+With ANCHORMD_STRICT=1, the CLI exits non-zero on any license validation
+failure (server unreachable, key revoked, expired) — your CI fails closed
+instead of silently downgrading to Free.
+
+── 3. Strict-only features ──
+
+    * Fail-closed license validation (ANCHORMD_STRICT)
+    * CI integration (PR comment automation)
+    * Drift detection — generate, fix, LLM judge, CI mode, HTML reports
+    * Fleet audit with --json export + history
+    * Team seats ({seats} machine activations on this license)
+    * Audit log (every scan recorded, 1-year retention, CSV export)
+
+── 4. Seat management ──
+
+This license supports {seats} concurrent machines. Each device that runs
+anchormd claims one seat automatically on first use. Manage seats at:
+https://anchormd.dev/strict/seats (admin) or contact support to release a
+stuck seat.
+
+── 5. Need help? ──
+
+CI setup recipes, audit log export, and procurement docs:
+https://anchormd.dev/strict/docs
+
+This key is shown once — save it somewhere safe.
+
+— Arete Consortium
+"""
 
 
 def _build_body(license_key: str, tier: str, product: str = "anchormd") -> str:

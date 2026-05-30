@@ -29,12 +29,8 @@ except ImportError:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Set up Stripe for AuditChain Pro"
-    )
-    parser.add_argument(
-        "--live", action="store_true", help="Confirm live mode (not test)"
-    )
+    parser = argparse.ArgumentParser(description="Set up Stripe for AuditChain Pro")
+    parser.add_argument("--live", action="store_true", help="Confirm live mode (not test)")
     args = parser.parse_args()
 
     key = os.environ.get("STRIPE_SECRET_KEY")

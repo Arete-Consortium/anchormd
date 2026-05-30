@@ -151,3 +151,9 @@ def track_pro_gate(feature: str) -> None:
     store = _get_store()
     if store is not None:
         store.record("pro_gate", feature)
+
+
+def track_strict_gate(feature: str) -> None:
+    store = _get_store()
+    if store is not None:
+        store.record("strict_gate", feature)

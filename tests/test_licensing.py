@@ -60,8 +60,17 @@ class TestTierDefinitions:
         pro = TIER_DEFINITIONS[Tier.PRO]
         assert "init_interactive" in pro.features
         assert "diff" in pro.features
-        assert "ci_integration" in pro.features
         assert "premium_presets" in pro.features
+        # ci_integration moved to Strict at v0.6.0 (no grandfather).
+        assert "ci_integration" not in pro.features
+
+    def test_strict_tier_has_exclusive_features(self) -> None:
+        strict = TIER_DEFINITIONS[Tier.STRICT]
+        assert "ci_integration" in strict.features
+        assert "strict_validation" in strict.features
+        assert "audit_log" in strict.features
+        assert "team_seats" in strict.features
+        assert "fleet_json" in strict.features
 
     def test_tier_config_has_price(self) -> None:
         for tier_config in TIER_DEFINITIONS.values():

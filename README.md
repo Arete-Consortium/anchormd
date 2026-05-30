@@ -4,7 +4,7 @@
 
 Stop hand-rolling CLAUDE.md. Let Forge analyze your codebase and generate
 a production-grade configuration file that makes Claude Code, Cursor,
-Windsurf, and Codex actually understand your project.
+Windsurf, Codex, and OpenCode actually understand your project.
 
 ## Why?
 
@@ -110,20 +110,29 @@ jobs:
 
 The action posts a formatted comment on your PR with score, findings, and recommendations.
 
-## Free vs Pro
+## Free vs Pro vs Strict
 
-| Feature | Free | Pro ($8/mo) |
-|---------|:----:|:-----------:|
-| `generate` — scan and produce CLAUDE.md | Yes | Yes |
-| `audit` — score existing CLAUDE.md | Yes | Yes |
-| 11 community presets (FastAPI, React, Rust, Django...) | Yes | Yes |
-| `init` — interactive guided setup | - | Yes |
-| `diff` — detect drift between CLAUDE.md and codebase | - | Yes |
-| CI integration — GitHub Action auto-audit on PR | - | Yes |
-| 6 premium presets (monorepo, data-science, devops...) | - | Yes |
-| Team templates (shared org standards) | - | Planned |
+| Feature | Free | Pro $8/mo | Strict $49/seat/mo |
+|---------|:----:|:---------:|:------------------:|
+| `generate` — scan and produce CLAUDE.md | Yes | Yes | Yes |
+| `audit` — score existing CLAUDE.md | Yes | Yes | Yes |
+| `verify`, `harvest`, `patch` | Yes | Yes | Yes |
+| 11 community presets | Yes | Yes | Yes |
+| `init` — interactive setup | - | Yes | Yes |
+| `diff` — detect drift | - | Yes | Yes |
+| 6 premium presets | - | Yes | Yes |
+| `tech-debt`, `github-health`, `cleanup` | - | Yes | Yes |
+| Fail-closed validation (`ANCHORMD_STRICT=1`) | - | - | Yes |
+| CI integration (PR comment automation) | - | - | Yes |
+| Drift detection (`generate`, `fix`, LLM judge, HTML) | - | - | Yes |
+| Fleet audit `--json` + history | - | - | Yes |
+| Team seats (one key → N machines) | - | - | Yes |
+| Audit log (1yr retention, CSV/JSON export) | - | - | Yes |
+| 99.5% license server SLA | - | - | Yes |
 
 **Get Pro:** [Monthly ($8/mo)](https://buy.stripe.com/dRm6oH0KD64P9xq13VgrS00) | [Yearly ($69/yr)](https://buy.stripe.com/00w00j64X2SDaBu5kbgrS01)
+
+**Get Strict** (for CI / teams / procurement-driven buyers): visit [anchormd.dev/?page=strict](https://anchormd.dev/?page=strict) — Seat Monthly $49/seat, Team-5 Annual $399, Team-25 Annual $1,490. Full feature documentation: [docs/strict.md](docs/strict.md).
 
 **All 5 Tools Bundle:** [Monthly ($29/mo)](https://buy.stripe.com/7sY9AT9h90Kv5ha27ZgrS0a) | [Yearly ($199/yr)](https://buy.stripe.com/9B6fZh9h98cX24YfYPgrS0b) — includes anchormd, agent-lint, ai-spend, promptctl, context-hygiene
 
@@ -132,15 +141,18 @@ The action posts a formatted comment on your PR with score, findings, and recomm
 export ANCHORMD_LICENSE=ANMD-XXXX-XXXX-XXXX
 ```
 
+> **Breaking in v0.6.0**: `ci_integration` and advanced drift commands (`drift generate`, `drift fix`, `drift report --ci`, `drift report --html`, `--judge-model`) moved from Pro to Strict. Existing Pro subscribers on those features should subscribe to Strict or pin `anchormd==0.5.0`. See [CHANGELOG](CHANGELOG.md#060---2026-05-17) for the migration guide.
+
 ### Strict Mode (CI / Unattended)
 
-By default, `anchormd` fails open: if the license server is unreachable and no cache exists, a valid-format key grants Pro so a transient network blip does not break a working install. Set `ANCHORMD_STRICT=1` to reverse that — any validation failure (missing key, server unreachable with no cache, revoked or expired key) drops to Free and exits non-zero on Pro commands.
+`anchormd` fails open by default: if the license server is unreachable and no cache exists, a valid-format key grants Pro so a transient network blip does not break a working install. Strict subscribers can set `ANCHORMD_STRICT=1` to reverse that — any validation failure (missing key, server unreachable with no cache, revoked or expired key) exits non-zero instead of degrading.
 
 ```bash
+export ANCHORMD_LICENSE=ANMD-XXXX-XXXX-XXXX
 export ANCHORMD_STRICT=1
 ```
 
-Recommended for CI jobs, release pipelines, and any unattended run where silent unlicensed fallback is worse than a hard fail. Leave unset for interactive developer use. See [anchormd.dev](https://anchormd.dev) for details.
+Recommended for CI jobs, release pipelines, and any unattended run where silent unlicensed fallback is worse than a hard fail. See [docs/strict.md](docs/strict.md) for CI recipes (GitHub Actions, GitLab, CircleCI).
 
 ## Framework Presets
 
