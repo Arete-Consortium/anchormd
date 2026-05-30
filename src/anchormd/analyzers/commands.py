@@ -46,7 +46,8 @@ class CommandAnalyzer:
             return {}
         try:
             data = json.loads(pkg.read_text(errors="replace"))
-            return data.get("scripts", {})
+            scripts = data.get("scripts", {})
+            return scripts if isinstance(scripts, dict) else {}
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Cannot parse package.json: %s", e)
             return {}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from anchormd.drift.adapters.base import ModelAdapter
 from anchormd.exceptions import DriftError
@@ -25,7 +26,7 @@ class AnthropicAdapter(ModelAdapter):
             raise DriftError("ANTHROPIC_API_KEY environment variable not set.")
 
         client = anthropic.Anthropic(api_key=api_key)
-        kwargs: dict = {
+        kwargs: dict[str, Any] = {
             "model": self._model,
             "max_tokens": 4096,
             "messages": [{"role": "user", "content": prompt}],
@@ -34,7 +35,7 @@ class AnthropicAdapter(ModelAdapter):
             kwargs["system"] = system
 
         response = client.messages.create(**kwargs)
-        return response.content[0].text  # type: ignore[union-attr]
+        return str(response.content[0].text)
 
     def name(self) -> str:
         return self._model

@@ -7,6 +7,7 @@ import json
 import logging
 import subprocess
 from datetime import UTC, datetime
+from typing import Any
 
 from anchormd.models import AnalysisResult, ForgeConfig, ProjectStructure
 
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 _GH_TIMEOUT = 10
 
 
-def _run_gh(args: list[str], cwd: str | None = None) -> dict | list | None:
+def _run_gh(args: list[str], cwd: str | None = None) -> dict[str, Any] | list[Any] | None:
     """Run a gh CLI command and return parsed JSON, or None on failure."""
     try:
         result = subprocess.run(
@@ -28,7 +29,8 @@ def _run_gh(args: list[str], cwd: str | None = None) -> dict | list | None:
         if result.returncode != 0:
             logger.debug("gh %s failed: %s", " ".join(args), result.stderr.strip())
             return None
-        return json.loads(result.stdout)
+        parsed: dict[str, Any] | list[Any] = json.loads(result.stdout)
+        return parsed
     except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError) as exc:
         logger.debug("gh command error: %s", exc)
         return None
@@ -108,7 +110,7 @@ class GitHubAnalyzer:
         findings["security"] = security
 
         # Branch protection
-        default_branch = findings["default_branch"]
+        default_branch = str(findings["default_branch"])
         protection = self._get_branch_protection(cwd, default_branch)
         findings["branch_protection"] = protection
 
@@ -133,7 +135,7 @@ class GitHubAnalyzer:
             section_content=section,
         )
 
-    def _get_issues(self, cwd: str) -> dict:
+    def _get_issues(self, cwd: str) -> dict[str, object]:
         """Get issue counts and staleness."""
         result: dict[str, object] = {"open": 0, "stale_30d": 0, "stale_90d": 0}
 
@@ -175,7 +177,7 @@ class GitHubAnalyzer:
         result["stale_90d"] = stale_90
         return result
 
-    def _get_pull_requests(self, cwd: str) -> dict:
+    def _get_pull_requests(self, cwd: str) -> dict[str, object]:
         """Get PR counts and staleness."""
         result: dict[str, object] = {"open": 0, "draft": 0, "stale_30d": 0}
 
@@ -213,31 +215,31 @@ class GitHubAnalyzer:
         result["stale_30d"] = stale
         return result
 
-    def _get_security(self, cwd: str) -> dict:
+    def _get_security(self, cwd: str) -> dict[str, int]:
         """Get security alert counts."""
         result: dict[str, int] = {"dependabot_alerts": 0, "code_scanning_alerts": 0}
 
-        # Dependabot alerts
-        alerts = _run_gh(
+        # Dependabot alerts (`--jq length` returns a bare count as text)
+        alerts = _run_gh_text(
             ["api", "repos/{owner}/{repo}/dependabot/alerts", "--jq", "length"],
             cwd=cwd,
         )
-        if alerts is not None:
+        if alerts:
             with contextlib.suppress(ValueError, TypeError):
                 result["dependabot_alerts"] = int(alerts)
 
         # Code scanning
-        scanning = _run_gh(
+        scanning = _run_gh_text(
             ["api", "repos/{owner}/{repo}/code-scanning/alerts", "--jq", "length"],
             cwd=cwd,
         )
-        if scanning is not None:
+        if scanning:
             with contextlib.suppress(ValueError, TypeError):
                 result["code_scanning_alerts"] = int(scanning)
 
         return result
 
-    def _get_branch_protection(self, cwd: str, branch: str) -> dict:
+    def _get_branch_protection(self, cwd: str, branch: str) -> dict[str, object]:
         """Check if the default branch has protection rules."""
         result: dict[str, object] = {"enabled": False}
 
@@ -255,7 +257,7 @@ class GitHubAnalyzer:
 
         return result
 
-    def _get_releases(self, cwd: str) -> dict:
+    def _get_releases(self, cwd: str) -> dict[str, object]:
         """Get recent release info."""
         result: dict[str, object] = {"total": 0, "latest": None, "latest_date": None}
 
@@ -274,7 +276,7 @@ class GitHubAnalyzer:
 
         return result
 
-    def _get_workflows(self, cwd: str) -> dict:
+    def _get_workflows(self, cwd: str) -> dict[str, object]:
         """Get CI workflow status."""
         result: dict[str, object] = {"count": 0, "failing": []}
 
@@ -296,7 +298,7 @@ class GitHubAnalyzer:
         result["failing"] = [name for name, conclusion in seen.items() if conclusion == "failure"]
         return result
 
-    def _calculate_health(self, findings: dict) -> int:
+    def _calculate_health(self, findings: dict[str, Any]) -> int:
         """Calculate 0-100 GitHub health score."""
         score = 100
 
@@ -328,9 +330,9 @@ class GitHubAnalyzer:
         if not findings.get("license"):
             score -= 5
 
-        return max(0, min(100, score))
+        return int(max(0, min(100, score)))
 
-    def _render_section(self, findings: dict) -> str:
+    def _render_section(self, findings: dict[str, Any]) -> str:
         """Render GitHub health section for context file."""
         if not findings.get("available"):
             return ""

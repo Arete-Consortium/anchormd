@@ -7,6 +7,7 @@ import logging
 import subprocess
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class CleanupPlan:
         return sum(1 for a in self.actions if a.error)
 
 
-def _run_gh(args: list[str], cwd: str | None = None) -> subprocess.CompletedProcess:
+def _run_gh(args: list[str], cwd: str | None = None) -> subprocess.CompletedProcess[str]:
     """Run a gh CLI command."""
     return subprocess.run(
         ["gh", *args],
@@ -55,13 +56,14 @@ def _run_gh(args: list[str], cwd: str | None = None) -> subprocess.CompletedProc
     )
 
 
-def _run_gh_json(args: list[str], cwd: str | None = None) -> list | dict | None:
+def _run_gh_json(args: list[str], cwd: str | None = None) -> list[Any] | dict[str, Any] | None:
     """Run gh and parse JSON output."""
     try:
         result = _run_gh(args, cwd=cwd)
         if result.returncode != 0:
             return None
-        return json.loads(result.stdout)
+        parsed: list[Any] | dict[str, Any] = json.loads(result.stdout)
+        return parsed
     except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError):
         return None
 

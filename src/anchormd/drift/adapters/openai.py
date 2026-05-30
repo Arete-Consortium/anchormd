@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from anchormd.drift.adapters.base import ModelAdapter
 from anchormd.exceptions import DriftError
@@ -25,7 +26,7 @@ class OpenAIAdapter(ModelAdapter):
             raise DriftError("OPENAI_API_KEY environment variable not set.")
 
         client = openai.OpenAI(api_key=api_key)
-        messages: list[dict] = []
+        messages: list[dict[str, Any]] = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -64,7 +65,7 @@ def suggest_fixes(
     and uses an LLM to suggest CLAUDE.md additions.
     """
     # Collect failing benchmarks.
-    failures: list[dict] = []
+    failures: list[dict[str, Any]] = []
     for result in run.results:
         failing_checks = [c for c in result.checks if not c.passed]
         if failing_checks:
