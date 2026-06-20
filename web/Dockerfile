@@ -7,7 +7,7 @@ COPY web/frontend/ ./
 RUN npm run build
 
 # Stage 2: Python backend + built frontend
-FROM python:3.12-slim
+FROM python:3.14-slim
 WORKDIR /app
 
 # Install git (needed for cloning repos).
